@@ -1,0 +1,88 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-dmg:
+    runs-on: macos-14
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app/Contents/Developer || sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+
+      - name: Install tooling
+        run: |
+          brew install xcodegen create-dmg
+
+      - name: Resolve version
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build release app (arm64)
+        run: |
+          xcodebuild \
+            -project Kaste.xcodeproj \
+            -scheme Kaste \
+            -configuration Release \
+            -derivedDataPath build \
+            -destination 'generic/platform=macOS,arch=arm64' \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=NO \
+            MARKETING_VERSION=${{ steps.version.outputs.version }} \
+            CODE_SIGN_IDENTITY=- \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Ad-hoc sign app
+        run: |
+          APP="build/Build/Products/Release/Kaste.app"
+          codesign --force --deep --sign - "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP" || true
+
+      - name: Package DMG
+        run: |
+          mkdir -p dist
+          APP="build/Build/Products/Release/Kaste.app"
+          create-dmg \
+            --volname "Kaste ${{ steps.version.outputs.version }}" \
+            --window-pos 200 120 \
+            --window-size 640 400 \
+            --icon-size 110 \
+            --icon "Kaste.app" 170 190 \
+            --hide-extension "Kaste.app" \
+            --app-drop-link 470 190 \
+            --no-internet-enable \
+            "dist/Kaste-${{ steps.version.outputs.version }}-arm64.dmg" \
+            "$APP"
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/Kaste-${{ steps.version.outputs.version }}-arm64.dmg
+          generate_release_notes: true
+          body: |
+            ## Install
+
+            1. Download `Kaste-${{ steps.version.outputs.version }}-arm64.dmg`
+            2. Open the DMG and drag **Kaste** into your **Applications** folder.
+            3. First launch: macOS Gatekeeper may block the unsigned build.
+               Either right-click the app and choose **Open**, or run:
+               ```bash
+               xattr -dr com.apple.quarantine /Applications/Kaste.app
+               ```
+            4. Grant **Accessibility** permission when prompted so `⏎` can paste into the frontmost app.
+
+            Architectures: Apple Silicon (arm64) only.

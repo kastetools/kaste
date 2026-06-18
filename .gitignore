@@ -1,0 +1,52 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+
+# Xcode build output
+build/
+DerivedData/
+*.xcuserstate
+*.xcscmblueprint
+*.xccheckout
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Xcode user-specific
+xcuserdata/
+*.xcuserdatad/
+
+# XcodeGen output — project.yml is the source of truth
+*.xcodeproj/
+
+# Swift Package Manager
+.swiftpm/
+.build/
+Packages/
+Package.resolved
+
+# Local provisioning / signing
+*.mobileprovision
+*.cer
+*.p12
+
+# CocoaPods / Carthage (in case used later)
+Pods/
+Carthage/Build/
+
+# Logs and editor cruft
+*.log
+*.swp
+*~
+.idea/
+.vscode/
+
+# Distribution artifacts
+*.dmg
+*.zip
+release/
