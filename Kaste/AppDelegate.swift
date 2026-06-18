@@ -8,6 +8,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var plainTextHotkey: Hotkey?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if !Self.ensureSingleInstance() { return }
+
         NSApp.setActivationPolicy(.accessory)
 
         let context = AppContainer.shared.container.mainContext
@@ -32,5 +34,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         clipboardMonitor?.stop()
+    }
+
+    private static func ensureSingleInstance() -> Bool {
+        guard let bundleID = Bundle.main.bundleIdentifier else { return true }
+        let current = NSRunningApplication.current
+        let others = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+            .filter { $0.processIdentifier != current.processIdentifier }
+        guard let existing = others.first else { return true }
+
+        existing.activate(options: [.activateIgnoringOtherApps])
+        NSApp.terminate(nil)
+        return false
     }
 }
