@@ -23,7 +23,7 @@ struct MainPanelView: View {
     @State private var listCount: Int = 0
     @FocusState private var searchFocused: Bool
 
-    enum Tab: Hashable { case all, pinned }
+    enum Tab: Hashable, CaseIterable { case all, pinned }
 
     var body: some View {
         ZStack {
@@ -63,6 +63,14 @@ struct MainPanelView: View {
             search = ""
             filter = nil
             tab = .all
+        }
+        .onAppear {
+            session.onSwitchTab = { forward in
+                let all = Tab.allCases
+                guard let idx = all.firstIndex(of: tab) else { return }
+                let next = forward ? (idx + 1) % all.count : (idx - 1 + all.count) % all.count
+                tab = all[next]
+            }
         }
     }
 
@@ -247,6 +255,8 @@ private struct ClipItemListView: View {
                 KeyHandler(
                     onLeft: { move(-1) },
                     onRight: { move(1) },
+                    onPrevTab: { session.onSwitchTab(false) },
+                    onNextTab: { session.onSwitchTab(true) },
                     onEnter: { commitSelected() },
                     onEsc: {
                         if selection > 0 { selection = 0 } else { onClose() }

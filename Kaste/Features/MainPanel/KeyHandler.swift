@@ -4,6 +4,8 @@ import AppKit
 struct KeyHandler: NSViewRepresentable {
     var onLeft: () -> Void
     var onRight: () -> Void
+    var onPrevTab: () -> Void = {}
+    var onNextTab: () -> Void = {}
     var onEnter: () -> Void
     var onEsc: () -> Void
     var onSpace: () -> Void
@@ -36,8 +38,10 @@ struct KeyHandler: NSViewRepresentable {
             guard let h = handler else { super.keyDown(with: event); return }
             let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             switch event.keyCode {
-            case 123: h.onLeft()                       // ←
-            case 124: h.onRight()                      // →
+            case 123:                                   // ←
+                if mods.contains(.command) { h.onPrevTab() } else { h.onLeft() }
+            case 124:                                   // →
+                if mods.contains(.command) { h.onNextTab() } else { h.onRight() }
             case 36, 76: h.onEnter()                   // return / numpad enter
             case 53: h.onEsc()                         // esc
             case 49: h.onSpace()                       // space
