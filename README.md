@@ -62,8 +62,26 @@ A 1:1 open-source clone of Paste — summon your full clipboard history with **�
 ## 🚀 Getting started / 快速开始
 
 ### Requirements / 环境要求
-- macOS 14 (Sonoma) or later
-- Xcode 15 or later
+- macOS 15 (Sequoia) or later
+- Xcode 16 or later (for building from source)
+
+### Install from release DMG / 下载 DMG 安装
+
+1. Grab the latest `Kaste-<version>-arm64.dmg` from [Releases](https://github.com/kastetools/kaste/releases).
+2. Open the DMG and drag **Kaste** into **/Applications**.
+3. **Remove the quarantine flag — required on every install/update**:
+
+   ```bash
+   xattr -dr com.apple.quarantine /Applications/Kaste.app
+   ```
+
+   Then double-click Kaste in /Applications. No more "unidentified developer" warning.
+
+> **Why?** Kaste is currently ad-hoc signed and **not** notarized by Apple, so macOS Gatekeeper quarantines the download. Running `xattr` strips the flag once; you'll need to repeat it after every upgrade. Proper Developer ID signing + notarization is on the roadmap and will remove this step.
+>
+> **为什么?** 当前 Kaste 是 ad-hoc 签名、未走 Apple 公证,macOS Gatekeeper 会隔离下载文件。上面那条命令删掉隔离标记后双击就能直接打开,**每次升级覆盖 .app 后需要再跑一次**。后续会上 Developer ID 签名 + 公证,届时无需此步骤。
+
+
 
 ### Build & run / 构建运行
 
