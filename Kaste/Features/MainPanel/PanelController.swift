@@ -8,7 +8,6 @@ final class PanelController: NSObject {
     private var panel: KastePanel?
     private var hosting: NSHostingView<AnyView>?
     private let session = PanelSession()
-    private var previewController: PreviewController?
     private var previousApp: NSRunningApplication?
 
     init(modelContainer: ModelContainer) {
@@ -22,10 +21,6 @@ final class PanelController: NSObject {
     /// Called once at app launch from AppDelegate.
     func warmUp() {
         _ = ensurePanel()
-        if previewController == nil {
-            previewController = PreviewController(session: session,
-                                                  modelContainer: modelContainer)
-        }
     }
 
     func toggle(plainText: Bool) {

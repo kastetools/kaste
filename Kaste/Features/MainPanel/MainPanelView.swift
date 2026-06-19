@@ -59,6 +59,11 @@ struct MainPanelView: View {
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay {
+            if let item = session.previewItem {
+                PreviewOverlayView(item: item) { session.previewItem = nil }
+            }
+        }
         .onChange(of: session.resetTick) { _, _ in
             search = ""
             filter = nil

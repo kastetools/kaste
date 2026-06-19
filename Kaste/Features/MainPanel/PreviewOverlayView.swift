@@ -6,20 +6,28 @@ struct PreviewOverlayView: View {
     let onClose: () -> Void
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider().opacity(0.4)
-            content
-            Divider().opacity(0.4)
-            footer
+        ZStack {
+            Color.black.opacity(0.5)
+                .onTapGesture(perform: onClose)
+
+            VStack(spacing: 0) {
+                header
+                Divider().opacity(0.4)
+                content
+                Divider().opacity(0.4)
+                footer
+            }
+            .background(VisualEffectBackground())
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(.white.opacity(0.12), lineWidth: 1)
+            )
+            .shadow(color: .black.opacity(0.4), radius: 18, y: 6)
+            .padding(.horizontal, 28)
+            .padding(.vertical, 14)
         }
-        .background(VisualEffectBackground())
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder(.white.opacity(0.12), lineWidth: 1)
-        )
-        .shadow(color: .black.opacity(0.45), radius: 28, y: 10)
+        .transition(.opacity)
     }
 
     private var header: some View {
