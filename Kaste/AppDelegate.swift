@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.clipboardMonitor = monitor
 
         let controller = PanelController(modelContainer: AppContainer.shared.container)
+        controller.warmUp()
         self.panelController = controller
 
         ShortcutManager.shared.onTogglePanel = { [weak controller] plain in

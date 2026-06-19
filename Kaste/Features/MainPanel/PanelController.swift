@@ -6,6 +6,8 @@ import SwiftData
 final class PanelController: NSObject {
     private let modelContainer: ModelContainer
     private var panel: KastePanel?
+    private var hosting: NSHostingView<AnyView>?
+    private let session = PanelSession()
     private var previousApp: NSRunningApplication?
 
     init(modelContainer: ModelContainer) {
@@ -14,6 +16,12 @@ final class PanelController: NSObject {
 
     private let showDuration: TimeInterval = 0.24
     private let hideDuration: TimeInterval = 0.18
+
+    /// Build the panel + SwiftUI hierarchy eagerly so the first ⇧⌘V is instant.
+    /// Called once at app launch from AppDelegate.
+    func warmUp() {
+        _ = ensurePanel()
+    }
 
     func toggle(plainText: Bool) {
         if let panel, panel.isVisible {
@@ -25,18 +33,10 @@ final class PanelController: NSObject {
 
     func show(plainText: Bool) {
         previousApp = NSWorkspace.shared.frontmostApplication
-        let panel = panel ?? makePanel()
-        self.panel = panel
+        let panel = ensurePanel()
 
-        let onCommit: (ClipItem) -> Void = { [weak self] item in
-            self?.commit(item: item, plainText: plainText)
-        }
-        let onClose: () -> Void = { [weak self] in self?.hide() }
-
-        let view = MainPanelView(plainTextMode: plainText, onPaste: onCommit, onClose: onClose)
-            .modelContainer(modelContainer)
-
-        panel.contentView = NSHostingView(rootView: view)
+        session.plainTextMode = plainText
+        session.resetTick &+= 1
 
         let target = bottomFrame()
         var start = target
@@ -61,8 +61,9 @@ final class PanelController: NSObject {
         }
     }
 
-    private func commit(item: ClipItem, plainText: Bool) {
+    private func commit(item: ClipItem) {
         let app = previousApp
+        let plainText = session.plainTextMode
         animateOut {
             app?.activate(options: [])
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.04) {
@@ -106,7 +107,9 @@ final class PanelController: NSObject {
         return NSRect(x: x, y: y, width: width, height: height)
     }
 
-    private func makePanel() -> KastePanel {
+    private func ensurePanel() -> KastePanel {
+        if let panel { return panel }
+
         let panel = KastePanel(
             contentRect: NSRect(x: 0, y: 0, width: 1280, height: 332),
             styleMask: [.nonactivatingPanel, .borderless, .fullSizeContentView],
@@ -121,6 +124,21 @@ final class PanelController: NSObject {
         panel.isOpaque = false
         panel.hasShadow = true
         panel.isMovableByWindowBackground = false
+
+        // Wire session callbacks once; the hosting view is then reused across all show/hide.
+        session.onPaste = { [weak self] item in self?.commit(item: item) }
+        session.onClose = { [weak self] in self?.hide() }
+
+        let root = AnyView(
+            MainPanelView()
+                .modelContainer(modelContainer)
+                .environmentObject(session)
+        )
+        let hosting = NSHostingView(rootView: root)
+        panel.contentView = hosting
+
+        self.panel = panel
+        self.hosting = hosting
         return panel
     }
 

@@ -2,11 +2,12 @@ import SwiftUI
 import SwiftData
 
 struct MainPanelView: View {
-    let plainTextMode: Bool
-    let onPaste: (ClipItem) -> Void
-    let onClose: () -> Void
-
+    @EnvironmentObject private var session: PanelSession
     @Environment(\.modelContext) private var context
+
+    private var plainTextMode: Bool { session.plainTextMode }
+    private var onPaste: (ClipItem) -> Void { session.onPaste }
+    private var onClose: () -> Void { session.onClose }
 
     // Lightweight queries used only for tab/footer counts. SwiftData materializes
     // these as faults; the heavy blobs (.externalStorage) are not loaded.
@@ -37,15 +38,18 @@ struct MainPanelView: View {
                     search: search,
                     filter: filter,
                     tab: tab,
-                    plainTextMode: plainTextMode,
-                    onPaste: onPaste,
-                    onClose: onClose,
                     visibleCount: $listCount
                 )
+                .id(tab)
                 footer
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .onChange(of: session.resetTick) { _, _ in
+            search = ""
+            filter = nil
+            tab = .all
+        }
     }
 
     // MARK: - Tab Switcher
@@ -170,30 +174,26 @@ struct MainPanelView: View {
 
 private struct ClipItemListView: View {
     @Environment(\.modelContext) private var context
+    @EnvironmentObject private var session: PanelSession
     @Query private var items: [ClipItem]
     @AppStorage(Shortcut.quickPasteKey) private var quickPasteModsRaw: Int = Int(Shortcut.defaultQuickPaste)
 
-    let plainTextMode: Bool
-    let onPaste: (ClipItem) -> Void
-    let onClose: () -> Void
     @Binding var visibleCount: Int
 
     @State private var selection: Int = 0
 
     private static let fetchLimit = 500
 
+    private var plainTextMode: Bool { session.plainTextMode }
+    private var onPaste: (ClipItem) -> Void { session.onPaste }
+    private var onClose: () -> Void { session.onClose }
+
     init(
         search: String,
         filter: ClipKind?,
         tab: MainPanelView.Tab,
-        plainTextMode: Bool,
-        onPaste: @escaping (ClipItem) -> Void,
-        onClose: @escaping () -> Void,
         visibleCount: Binding<Int>
     ) {
-        self.plainTextMode = plainTextMode
-        self.onPaste = onPaste
-        self.onClose = onClose
         self._visibleCount = visibleCount
 
         // Captured-by-macro values must be locals.
