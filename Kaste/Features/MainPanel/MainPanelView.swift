@@ -248,7 +248,9 @@ private struct ClipItemListView: View {
                     onLeft: { move(-1) },
                     onRight: { move(1) },
                     onEnter: { commitSelected() },
-                    onEsc: onClose,
+                    onEsc: {
+                        if selection > 0 { selection = 0 } else { onClose() }
+                    },
                     onSpace: {},
                     onPin: { togglePinSelected() },
                     onDelete: { deleteSelected() },

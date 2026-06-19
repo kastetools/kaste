@@ -52,14 +52,28 @@ enum Paster {
         DispatchQueue.main.async {
             let alert = NSAlert()
             alert.messageText = "Kaste needs Accessibility access"
-            alert.informativeText = "Kaste copied the item to your clipboard, but to auto-paste with ⏎ it needs Accessibility permission.\n\nIf you’ve granted it before, the system may have invalidated the entry after an update — toggle Kaste off and on again in the list."
+            alert.informativeText = """
+                The item has been copied to your clipboard, but Kaste needs Accessibility permission to auto-paste with ⏎ or ⌘1–⌘9.
+
+                If you’ve already enabled Kaste in the list and it still doesn’t work, the system has likely cached an old code signature. Fix:
+
+                1. Open System Settings → Privacy & Security → Accessibility
+                2. Select Kaste in the list, click "–" to remove it
+                3. Click "Quit Kaste" below
+                4. Relaunch Kaste, then re-add it to the list (drag /Applications/Kaste.app in or hit "+")
+                """
             alert.addButton(withTitle: "Open System Settings…")
+            alert.addButton(withTitle: "Quit Kaste")
             alert.addButton(withTitle: "Later")
             let resp = alert.runModal()
             alertShown = false
-            if resp == .alertFirstButtonReturn {
+            switch resp {
+            case .alertFirstButtonReturn:
                 NSWorkspace.shared.open(URL(string:
                     "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
+            case .alertSecondButtonReturn:
+                NSApp.terminate(nil)
+            default: break
             }
         }
     }
