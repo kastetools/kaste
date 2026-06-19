@@ -12,40 +12,40 @@ final class Hotkey {
     }
 
     private static var handlerInstalled = false
-    private static var registry: [UInt32: Hotkey] = [:]
+    private static var actions: [UInt32: () -> Void] = [:]
     private static var nextID: UInt32 = 1
 
     private let id: UInt32
     private var ref: EventHotKeyRef?
-    private let action: () -> Void
 
     init(keyCode: UInt32, modifiers: Modifiers, action: @escaping () -> Void) {
-        self.action = action
         self.id = Hotkey.nextID
         Hotkey.nextID += 1
 
         Hotkey.installHandlerIfNeeded()
+        Hotkey.actions[id] = action
 
-        var hotKeyID = EventHotKeyID(signature: OSType(0x4B535445 /* "KSTE" */), id: id)
+        let hotKeyID = EventHotKeyID(signature: OSType(0x4B535445 /* "KSTE" */), id: id)
         var ref: EventHotKeyRef?
-        let status = RegisterEventHotKey(keyCode, modifiers.rawValue, hotKeyID, GetApplicationEventTarget(), 0, &ref)
+        let status = RegisterEventHotKey(keyCode, modifiers.rawValue, hotKeyID,
+                                         GetApplicationEventTarget(), 0, &ref)
         if status == noErr, let ref {
             self.ref = ref
-            Hotkey.registry[id] = self
+        } else {
+            Hotkey.actions[id] = nil
         }
     }
 
     deinit {
         if let ref { UnregisterEventHotKey(ref) }
-        Hotkey.registry[id] = nil
+        Hotkey.actions[id] = nil
     }
-
-    fileprivate func fire() { action() }
 
     private static func installHandlerIfNeeded() {
         guard !handlerInstalled else { return }
         handlerInstalled = true
-        var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+        var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard),
+                                 eventKind: UInt32(kEventHotKeyPressed))
         InstallEventHandler(GetApplicationEventTarget(), { _, event, _ -> OSStatus in
             guard let event else { return OSStatus(eventNotHandledErr) }
             var hkID = EventHotKeyID()
@@ -53,7 +53,7 @@ final class Hotkey {
                               EventParamType(typeEventHotKeyID), nil,
                               MemoryLayout<EventHotKeyID>.size, nil, &hkID)
             DispatchQueue.main.async {
-                Hotkey.registry[hkID.id]?.fire()
+                Hotkey.actions[hkID.id]?()
             }
             return noErr
         }, 1, &spec, nil, nil)

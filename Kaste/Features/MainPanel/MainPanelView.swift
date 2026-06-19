@@ -63,6 +63,7 @@ struct MainPanelView: View {
             search = ""
             filter = nil
             tab = .all
+            session.previewItem = nil
         }
         .onAppear {
             session.onSwitchTab = { forward in
@@ -259,9 +260,15 @@ private struct ClipItemListView: View {
                     onNextTab: { session.onSwitchTab(true) },
                     onEnter: { commitSelected() },
                     onEsc: {
-                        if selection > 0 { selection = 0 } else { onClose() }
+                        if session.previewItem != nil {
+                            session.previewItem = nil
+                        } else if selection > 0 {
+                            selection = 0
+                        } else {
+                            onClose()
+                        }
                     },
-                    onSpace: {},
+                    onSpace: { togglePreview() },
                     onPin: { togglePinSelected() },
                     onDelete: { deleteSelected() },
                     onDigit: { jumpTo($0) },
@@ -290,7 +297,10 @@ private struct ClipItemListView: View {
                             isSelected: idx == selection
                         )
                         .id(item.id)
-                        .onTapGesture { selection = idx; commitSelected() }
+                        .onTapGesture(count: 2) { selection = idx; commitSelected() }
+                        .simultaneousGesture(
+                            TapGesture(count: 1).onEnded { selection = idx }
+                        )
                         .contextMenu {
                             Button(item.isPinned ? "Unpin" : "Pin") {
                                 item.isPinned.toggle()
@@ -299,11 +309,21 @@ private struct ClipItemListView: View {
                             Button(plainTextMode ? "Paste as Plain Text" : "Paste") {
                                 onPaste(item)
                             }
+                            if item.kind == .file || item.kind == .image {
+                                Divider()
+                                Button("Quick Look") { ItemActions.preview(item) }
+                                if item.kind == .file {
+                                    Button("Open in Finder") { ItemActions.revealInFinder(item) }
+                                }
+                            }
                             Divider()
                             Button("Delete", role: .destructive) {
                                 context.delete(item)
                                 try? context.save()
                             }
+                        }
+                        .onDrag {
+                            ItemActions.makeDragProvider(for: item) ?? NSItemProvider()
                         }
                     }
                 }
@@ -343,6 +363,14 @@ private struct ClipItemListView: View {
     private func commitSelected() {
         guard items.indices.contains(selection) else { return }
         onPaste(items[selection])
+    }
+
+    private func togglePreview() {
+        if session.previewItem != nil {
+            session.previewItem = nil
+        } else if items.indices.contains(selection) {
+            session.previewItem = items[selection]
+        }
     }
 
     private func togglePinSelected() {
