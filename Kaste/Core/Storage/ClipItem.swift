@@ -29,6 +29,8 @@ enum ClipKind: String, Codable, CaseIterable {
 
 @Model
 final class ClipItem {
+    #Index<ClipItem>([\.lastUsedAt], [\.isPinned], [\.kindRaw], [\.contentHash])
+
     @Attribute(.unique) var id: UUID
     var createdAt: Date
     var lastUsedAt: Date
@@ -38,6 +40,7 @@ final class ClipItem {
     var contentHash: String
 
     var plainText: String?
+    var searchKey: String?
     var rtfData: Data?
     @Attribute(.externalStorage) var imageData: Data?
     var filePaths: [String]?
@@ -68,6 +71,7 @@ final class ClipItem {
         self.kindRaw = kind.rawValue
         self.contentHash = hash
         self.plainText = plainText
+        self.searchKey = plainText?.lowercased()
         self.rtfData = rtfData
         self.imageData = imageData
         self.filePaths = filePaths

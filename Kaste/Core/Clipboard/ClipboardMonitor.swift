@@ -126,17 +126,42 @@ final class ClipboardMonitor {
         let item = make()
         context.insert(item)
         try? context.save()
-        Task { @MainActor in self.enforceCapacity() }
+        Task { @MainActor in
+            self.enforceRetention()
+            self.enforceCapacity()
+        }
     }
 
-    private func enforceCapacity() {
+    func backfillSearchKey() {
+        let d = FetchDescriptor<ClipItem>(predicate: #Predicate { $0.searchKey == nil && $0.plainText != nil })
+        guard let pending = try? context.fetch(d), !pending.isEmpty else { return }
+        for item in pending { item.searchKey = item.plainText?.lowercased() }
+        try? context.save()
+    }
+
+    func enforceRetention() {
+        let days = UserDefaults.standard.object(forKey: "retentionDays") as? Int ?? 30
+        guard days > 0 else { return }
+        let cutoff = Date().addingTimeInterval(-Double(days) * 86400)
+        let expired = FetchDescriptor<ClipItem>(
+            predicate: #Predicate { !$0.isPinned && $0.lastUsedAt < cutoff }
+        )
+        guard let victims = try? context.fetch(expired), !victims.isEmpty else { return }
+        for item in victims { context.delete(item) }
+        try? context.save()
+    }
+
+    func enforceCapacity() {
         let maxItems = UserDefaults.standard.object(forKey: "maxItems") as? Int ?? 1000
-        var d = FetchDescriptor<ClipItem>(sortBy: [SortDescriptor(\.lastUsedAt, order: .reverse)])
-        d.fetchLimit = maxItems + 200
-        guard let all = try? context.fetch(d), all.count > maxItems else { return }
-        for item in all.dropFirst(maxItems) where !item.isPinned {
-            context.delete(item)
-        }
+        let nonPinned = FetchDescriptor<ClipItem>(predicate: #Predicate { !$0.isPinned })
+        guard let total = try? context.fetchCount(nonPinned), total > maxItems else { return }
+        var oldest = FetchDescriptor<ClipItem>(
+            predicate: #Predicate { !$0.isPinned },
+            sortBy: [SortDescriptor(\.lastUsedAt, order: .forward)]
+        )
+        oldest.fetchLimit = total - maxItems
+        guard let victims = try? context.fetch(oldest) else { return }
+        for item in victims { context.delete(item) }
         try? context.save()
     }
 

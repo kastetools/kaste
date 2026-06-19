@@ -7,55 +7,79 @@ struct MainPanelView: View {
     let onClose: () -> Void
 
     @Environment(\.modelContext) private var context
+
+    // Lightweight queries used only for tab/footer counts. SwiftData materializes
+    // these as faults; the heavy blobs (.externalStorage) are not loaded.
     @Query(sort: \ClipItem.lastUsedAt, order: .reverse)
     private var allItems: [ClipItem]
+    @Query(filter: #Predicate<ClipItem> { $0.isPinned },
+           sort: \ClipItem.lastUsedAt, order: .reverse)
+    private var pinnedItems: [ClipItem]
 
     @State private var search = ""
     @State private var filter: ClipKind? = nil
-    @State private var selection: Int = 0
+    @State private var tab: Tab = .all
+    @State private var listCount: Int = 0
     @FocusState private var searchFocused: Bool
 
-    private var items: [ClipItem] {
-        var result = allItems.sorted { a, b in
-            if a.isPinned != b.isPinned { return a.isPinned && !b.isPinned }
-            return a.lastUsedAt > b.lastUsedAt
-        }
-        if let filter { result = result.filter { $0.kind == filter } }
-        if !search.isEmpty {
-            let q = search.lowercased()
-            result = result.filter { ($0.plainText ?? "").lowercased().contains(q) }
-        }
-        return result
-    }
+    enum Tab: Hashable { case all, pinned }
 
     var body: some View {
         ZStack {
             VisualEffectBackground()
             VStack(spacing: 0) {
-                header
-                Divider().opacity(0.4)
-                if items.isEmpty {
-                    emptyState
-                } else {
-                    cards
+                ZStack {
+                    header
+                    tabSwitcher
                 }
+                Divider().opacity(0.4)
+                ClipItemListView(
+                    search: search,
+                    filter: filter,
+                    tab: tab,
+                    plainTextMode: plainTextMode,
+                    onPaste: onPaste,
+                    onClose: onClose,
+                    visibleCount: $listCount
+                )
                 footer
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .background(KeyHandler(
-            onLeft: { move(-1) },
-            onRight: { move(1) },
-            onEnter: { commitSelected() },
-            onEsc: onClose,
-            onSpace: { /* TODO quick look */ },
-            onPin: { togglePinSelected() },
-            onDelete: { deleteSelected() },
-            onDigit: { jumpTo($0) }
-        ))
-        .onChange(of: items.count) { _, _ in
-            if selection >= items.count { selection = max(0, items.count - 1) }
+    }
+
+    // MARK: - Tab Switcher
+
+    private var tabSwitcher: some View {
+        HStack(spacing: 4) {
+            tabButton(.all, label: "All", count: allItems.count)
+            tabButton(.pinned, label: "Pinned", count: pinnedItems.count, symbol: "pin.fill")
         }
+        .padding(3)
+        .background(.white.opacity(0.06), in: Capsule())
+        .padding(.top, 4)
+        .frame(maxWidth: .infinity, alignment: .center)
+    }
+
+    private func tabButton(_ value: Tab, label: String, count: Int, symbol: String? = nil) -> some View {
+        let isOn = tab == value
+        return Button { tab = value } label: {
+            HStack(spacing: 5) {
+                if let symbol {
+                    Image(systemName: symbol).font(.system(size: 10))
+                }
+                Text(label).font(.system(size: 11, weight: .semibold))
+                Text("\(count)")
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .padding(.horizontal, 5).padding(.vertical, 1)
+                    .background(.white.opacity(isOn ? 0.18 : 0.08), in: Capsule())
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 10).padding(.vertical, 4)
+            .background(isOn ? Color.accentColor.opacity(0.28) : Color.clear, in: Capsule())
+            .foregroundStyle(isOn ? Color.accentColor : .secondary)
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Header
@@ -85,10 +109,10 @@ struct MainPanelView: View {
 
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField("Search", text: $search)
-                    .textFieldStyle(.plain)
-                    .focused($searchFocused)
-                    .frame(width: 200)
+                SearchField(text: $search, placeholder: "Search") {
+                    if search.isEmpty { onClose() } else { search = "" }
+                }
+                .frame(width: 200, height: 18)
             }
             .padding(.horizontal, 10).padding(.vertical, 6)
             .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
@@ -100,7 +124,6 @@ struct MainPanelView: View {
         let isOn = (filter == kind)
         return Button {
             filter = kind
-            selection = 0
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: symbol).font(.system(size: 10))
@@ -114,7 +137,109 @@ struct MainPanelView: View {
         .buttonStyle(.plain)
     }
 
-    // MARK: - Cards
+    // MARK: - Footer
+
+    private var footer: some View {
+        HStack(spacing: 16) {
+            footerKey("←/→", "Navigate")
+            footerKey("⏎", plainTextMode ? "Paste plain" : "Paste")
+            footerKey("Space", "Preview")
+            footerKey("⌘P", "Pin")
+            footerKey("⌫", "Delete")
+            footerKey("esc", "Close")
+            Spacer()
+            Text("\(listCount) items")
+                .font(.system(size: 10)).foregroundStyle(.tertiary)
+        }
+        .padding(.horizontal, 16).padding(.vertical, 8)
+        .background(.black.opacity(0.15))
+    }
+
+    private func footerKey(_ key: String, _ label: String) -> some View {
+        HStack(spacing: 4) {
+            Text(key)
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .padding(.horizontal, 5).padding(.vertical, 2)
+                .background(.white.opacity(0.1), in: RoundedRectangle(cornerRadius: 4))
+            Text(label).font(.system(size: 10)).foregroundStyle(.secondary)
+        }
+    }
+}
+
+// MARK: - List (descriptor-backed @Query)
+
+private struct ClipItemListView: View {
+    @Environment(\.modelContext) private var context
+    @Query private var items: [ClipItem]
+
+    let plainTextMode: Bool
+    let onPaste: (ClipItem) -> Void
+    let onClose: () -> Void
+    @Binding var visibleCount: Int
+
+    @State private var selection: Int = 0
+
+    private static let fetchLimit = 500
+
+    init(
+        search: String,
+        filter: ClipKind?,
+        tab: MainPanelView.Tab,
+        plainTextMode: Bool,
+        onPaste: @escaping (ClipItem) -> Void,
+        onClose: @escaping () -> Void,
+        visibleCount: Binding<Int>
+    ) {
+        self.plainTextMode = plainTextMode
+        self.onPaste = onPaste
+        self.onClose = onClose
+        self._visibleCount = visibleCount
+
+        // Captured-by-macro values must be locals.
+        let onlyPinned = (tab == .pinned)
+        let hasFilter = (filter != nil)
+        let filterRaw = filter?.rawValue ?? ""
+        let hasSearch = !search.isEmpty
+        let q = search.lowercased()
+
+        let predicate = #Predicate<ClipItem> { item in
+            (!onlyPinned || item.isPinned) &&
+            (!hasFilter || item.kindRaw == filterRaw) &&
+            (!hasSearch || (item.searchKey?.contains(q) ?? false))
+        }
+
+        var descriptor = FetchDescriptor<ClipItem>(
+            predicate: predicate,
+            sortBy: [SortDescriptor(\.lastUsedAt, order: .reverse)]
+        )
+        descriptor.fetchLimit = Self.fetchLimit
+        _items = Query(descriptor)
+    }
+
+    var body: some View {
+        Group {
+            if items.isEmpty {
+                emptyState
+            } else {
+                cards
+            }
+        }
+        .background(KeyHandler(
+            onLeft: { move(-1) },
+            onRight: { move(1) },
+            onEnter: { commitSelected() },
+            onEsc: onClose,
+            onSpace: {},
+            onPin: { togglePinSelected() },
+            onDelete: { deleteSelected() },
+            onDigit: { jumpTo($0) }
+        ))
+        .onAppear { visibleCount = items.count }
+        .onChange(of: items.count) { _, new in
+            visibleCount = new
+            if selection >= new { selection = max(0, new - 1) }
+        }
+    }
 
     private var cards: some View {
         ScrollViewReader { proxy in
@@ -128,6 +253,20 @@ struct MainPanelView: View {
                         )
                         .id(item.id)
                         .onTapGesture { selection = idx; commitSelected() }
+                        .contextMenu {
+                            Button(item.isPinned ? "Unpin" : "Pin") {
+                                item.isPinned.toggle()
+                                try? context.save()
+                            }
+                            Button(plainTextMode ? "Paste as Plain Text" : "Paste") {
+                                onPaste(item)
+                            }
+                            Divider()
+                            Button("Delete", role: .destructive) {
+                                context.delete(item)
+                                try? context.save()
+                            }
+                        }
                     }
                 }
                 .padding(.horizontal, 16)
@@ -148,40 +287,12 @@ struct MainPanelView: View {
         VStack(spacing: 8) {
             Image(systemName: "tray").font(.system(size: 36))
                 .foregroundStyle(.secondary)
-            Text("Clipboard is empty")
+            Text("No items")
                 .font(.system(size: 13))
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)
         .frame(height: 232)
-    }
-
-    // MARK: - Footer
-
-    private var footer: some View {
-        HStack(spacing: 16) {
-            footerKey("←/→", "Navigate")
-            footerKey("⏎", plainTextMode ? "Paste plain" : "Paste")
-            footerKey("Space", "Preview")
-            footerKey("⌘P", "Pin")
-            footerKey("⌫", "Delete")
-            footerKey("esc", "Close")
-            Spacer()
-            Text("\(items.count) items")
-                .font(.system(size: 10)).foregroundStyle(.tertiary)
-        }
-        .padding(.horizontal, 16).padding(.vertical, 8)
-        .background(.black.opacity(0.15))
-    }
-
-    private func footerKey(_ key: String, _ label: String) -> some View {
-        HStack(spacing: 4) {
-            Text(key)
-                .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                .padding(.horizontal, 5).padding(.vertical, 2)
-                .background(.white.opacity(0.1), in: RoundedRectangle(cornerRadius: 4))
-            Text(label).font(.system(size: 10)).foregroundStyle(.secondary)
-        }
     }
 
     // MARK: - Actions

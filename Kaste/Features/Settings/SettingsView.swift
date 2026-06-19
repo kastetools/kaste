@@ -41,11 +41,55 @@ private struct GeneralTab: View {
 
 private struct HistoryTab: View {
     @AppStorage("maxItems") private var maxItems: Int = 1000
+    @AppStorage("retentionDays") private var retentionDays: Int = 30
     @Environment(\.modelContext) private var context
+
+    private static let retentionOptions: [(days: Int, label: String)] = [
+        (7,  "1 week"),
+        (14, "2 weeks"),
+        (30, "1 month"),
+        (90, "3 months")
+    ]
+
+    private var retentionIndex: Binding<Double> {
+        Binding(
+            get: {
+                Double(Self.retentionOptions.firstIndex(where: { $0.days == retentionDays }) ?? 2)
+            },
+            set: { new in
+                let idx = max(0, min(Self.retentionOptions.count - 1, Int(new.rounded())))
+                retentionDays = Self.retentionOptions[idx].days
+            }
+        )
+    }
 
     var body: some View {
         Form {
             Stepper("Keep last \(maxItems) items", value: $maxItems, in: 50...10000, step: 50)
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("Retention")
+                    Spacer()
+                    Text(Self.retentionOptions.first { $0.days == retentionDays }?.label ?? "1 month")
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+                Slider(
+                    value: retentionIndex,
+                    in: 0...Double(Self.retentionOptions.count - 1),
+                    step: 1
+                )
+                HStack {
+                    ForEach(Self.retentionOptions, id: \.days) { opt in
+                        Text(opt.label)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+            }
+
             Button("Clear all history") {
                 try? context.delete(model: ClipItem.self, where: #Predicate { !$0.isPinned })
             }
