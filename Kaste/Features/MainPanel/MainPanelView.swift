@@ -34,13 +34,27 @@ struct MainPanelView: View {
                     tabSwitcher
                 }
                 Divider().opacity(0.4)
-                ClipItemListView(
-                    search: search,
-                    filter: filter,
-                    tab: tab,
-                    visibleCount: $listCount
-                )
-                .id(tab)
+                ZStack {
+                    ClipItemListView(
+                        search: search,
+                        filter: filter,
+                        tab: .all,
+                        isActive: tab == .all,
+                        visibleCount: $listCount
+                    )
+                    .opacity(tab == .all ? 1 : 0)
+                    .allowsHitTesting(tab == .all)
+
+                    ClipItemListView(
+                        search: search,
+                        filter: filter,
+                        tab: .pinned,
+                        isActive: tab == .pinned,
+                        visibleCount: $listCount
+                    )
+                    .opacity(tab == .pinned ? 1 : 0)
+                    .allowsHitTesting(tab == .pinned)
+                }
                 footer
             }
         }
@@ -178,6 +192,7 @@ private struct ClipItemListView: View {
     @Query private var items: [ClipItem]
     @AppStorage(Shortcut.quickPasteKey) private var quickPasteModsRaw: Int = Int(Shortcut.defaultQuickPaste)
 
+    let isActive: Bool
     @Binding var visibleCount: Int
 
     @State private var selection: Int = 0
@@ -192,8 +207,10 @@ private struct ClipItemListView: View {
         search: String,
         filter: ClipKind?,
         tab: MainPanelView.Tab,
+        isActive: Bool,
         visibleCount: Binding<Int>
     ) {
+        self.isActive = isActive
         self._visibleCount = visibleCount
 
         // Captured-by-macro values must be locals.
@@ -225,21 +242,28 @@ private struct ClipItemListView: View {
                 cards
             }
         }
-        .background(KeyHandler(
-            onLeft: { move(-1) },
-            onRight: { move(1) },
-            onEnter: { commitSelected() },
-            onEsc: onClose,
-            onSpace: {},
-            onPin: { togglePinSelected() },
-            onDelete: { deleteSelected() },
-            onDigit: { jumpTo($0) },
-            digitMods: Shortcut.nsMods(from: UInt32(quickPasteModsRaw))
-        ))
-        .onAppear { visibleCount = items.count }
+        .background {
+            if isActive {
+                KeyHandler(
+                    onLeft: { move(-1) },
+                    onRight: { move(1) },
+                    onEnter: { commitSelected() },
+                    onEsc: onClose,
+                    onSpace: {},
+                    onPin: { togglePinSelected() },
+                    onDelete: { deleteSelected() },
+                    onDigit: { jumpTo($0) },
+                    digitMods: Shortcut.nsMods(from: UInt32(quickPasteModsRaw))
+                )
+            }
+        }
+        .onAppear { if isActive { visibleCount = items.count } }
         .onChange(of: items.count) { _, new in
-            visibleCount = new
+            if isActive { visibleCount = new }
             if selection >= new { selection = max(0, new - 1) }
+        }
+        .onChange(of: isActive) { _, active in
+            if active { visibleCount = items.count }
         }
     }
 
