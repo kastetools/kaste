@@ -17,6 +17,9 @@ final class PanelController: NSObject {
     private let showDuration: TimeInterval = 0.24
     private let hideDuration: TimeInterval = 0.18
 
+    private enum State { case hidden, showing, visible, hiding }
+    private var state: State = .hidden
+
     /// Build the panel + SwiftUI hierarchy eagerly so the first ⇧⌘V is instant.
     /// Called once at app launch from AppDelegate.
     func warmUp() {
@@ -24,10 +27,11 @@ final class PanelController: NSObject {
     }
 
     func toggle(plainText: Bool) {
-        if let panel, panel.isVisible {
-            hide()
-        } else {
+        switch state {
+        case .hidden, .hiding:
             show(plainText: plainText)
+        case .visible, .showing:
+            hide()
         }
     }
 
@@ -38,21 +42,29 @@ final class PanelController: NSObject {
         session.plainTextMode = plainText
         session.resetTick &+= 1
 
+        state = .showing
+
         let target = bottomFrame()
-        var start = target
-        start.origin.y -= target.height + 20
-        panel.setFrame(start, display: false)
-        panel.alphaValue = 0
+        // If we were mid-hide, keep current y and slide back up from wherever it is.
+        // Otherwise start from the off-screen position.
+        if !panel.isVisible {
+            var start = target
+            start.origin.y -= target.height + 20
+            panel.setFrame(start, display: false)
+            panel.alphaValue = 0
+        }
         panel.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
 
-        NSAnimationContext.runAnimationGroup { ctx in
+        NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = showDuration
             ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
             ctx.allowsImplicitAnimation = true
             panel.animator().setFrame(target, display: true)
             panel.animator().alphaValue = 1
-        }
+        }, completionHandler: { [weak self] in
+            if self?.state == .showing { self?.state = .visible }
+        })
     }
 
     func hide() {
@@ -74,7 +86,12 @@ final class PanelController: NSObject {
 
     private func animateOut(_ completion: @escaping () -> Void) {
         session.previewItem = nil
-        guard let panel, panel.isVisible else { completion(); return }
+        guard let panel, panel.isVisible else {
+            state = .hidden
+            completion()
+            return
+        }
+        state = .hiding
         var off = panel.frame
         off.origin.y -= off.height + 20
 
@@ -84,9 +101,14 @@ final class PanelController: NSObject {
             ctx.allowsImplicitAnimation = true
             panel.animator().setFrame(off, display: true)
             panel.animator().alphaValue = 0
-        }, completionHandler: {
-            panel.orderOut(nil)
-            panel.alphaValue = 1
+        }, completionHandler: { [weak self] in
+            // If a re-show happened mid-animation, state was flipped to .showing;
+            // don't yank the panel out from under it.
+            if self?.state == .hiding {
+                panel.orderOut(nil)
+                panel.alphaValue = 1
+                self?.state = .hidden
+            }
             completion()
         })
     }
