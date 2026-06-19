@@ -2,7 +2,10 @@ import AppKit
 
 enum Paster {
     /// Restores the pasteboard archive (or plain text) and synthesizes ⌘V.
+    /// If Accessibility is not granted yet, copies to the pasteboard and shows
+    /// our own prompt — the system prompt is never triggered automatically.
     static func paste(_ item: ClipItem, plainTextOnly: Bool) {
+        let trusted = AXIsProcessTrusted()
         let pb = NSPasteboard.general
         pb.clearContents()
 
@@ -31,9 +34,33 @@ enum Paster {
         item.lastUsedAt = Date()
         item.useCount += 1
 
+        guard trusted else {
+            showAccessibilityAlert()
+            return
+        }
+
         // Yield a tick so the previous front app regains focus, then synthesize ⌘V.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
             sendCommandV()
+        }
+    }
+
+    private static var alertShown = false
+    private static func showAccessibilityAlert() {
+        guard !alertShown else { return }
+        alertShown = true
+        DispatchQueue.main.async {
+            let alert = NSAlert()
+            alert.messageText = "Kaste needs Accessibility access"
+            alert.informativeText = "Kaste copied the item to your clipboard, but to auto-paste with ⏎ it needs Accessibility permission.\n\nIf you’ve granted it before, the system may have invalidated the entry after an update — toggle Kaste off and on again in the list."
+            alert.addButton(withTitle: "Open System Settings…")
+            alert.addButton(withTitle: "Later")
+            let resp = alert.runModal()
+            alertShown = false
+            if resp == .alertFirstButtonReturn {
+                NSWorkspace.shared.open(URL(string:
+                    "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
+            }
         }
     }
 
@@ -48,9 +75,5 @@ enum Paster {
         up?.post(tap: .cghidEventTap)
     }
 
-    @discardableResult
-    static func requestAccessibilityIfNeeded() -> Bool {
-        let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-        return AXIsProcessTrustedWithOptions(opts)
-    }
+    static var isAccessibilityTrusted: Bool { AXIsProcessTrusted() }
 }

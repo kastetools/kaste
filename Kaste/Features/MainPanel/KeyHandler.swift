@@ -10,6 +10,7 @@ struct KeyHandler: NSViewRepresentable {
     var onPin: () -> Void
     var onDelete: () -> Void
     var onDigit: (Int) -> Void
+    var digitMods: NSEvent.ModifierFlags = .command
 
     func makeNSView(context: Context) -> NSView {
         let view = KeyView()
@@ -44,7 +45,8 @@ struct KeyHandler: NSViewRepresentable {
                 if mods.contains(.command) { h.onPin() } else { super.keyDown(with: event) }
             case 51, 117: h.onDelete()                 // delete / fwd delete
             case 18...26:                              // 1..9
-                if mods.contains(.command) {
+                let mask: NSEvent.ModifierFlags = [.command, .shift, .option, .control]
+                if mods.intersection(mask) == h.digitMods {
                     let digit = digitForKey(event.keyCode)
                     if digit > 0 { h.onDigit(digit) }
                 } else { super.keyDown(with: event) }

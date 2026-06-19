@@ -100,13 +100,68 @@ private struct HistoryTab: View {
 }
 
 private struct ShortcutsTab: View {
+    @State private var panel: Shortcut = .load(Shortcut.panelKey, fallback: .defaultPanel)
+    @State private var panelPlain: Shortcut = .load(Shortcut.panelPlainKey, fallback: .defaultPanelPlain)
+    @AppStorage(Shortcut.quickPasteKey) private var quickPasteModsRaw: Int = Int(Shortcut.defaultQuickPaste)
+
+    private static let prefixOptions: [(label: String, raw: Int)] = {
+        let cmd = Int(Hotkey.Modifiers.command.rawValue)
+        let ctl = Int(Hotkey.Modifiers.control.rawValue)
+        let opt = Int(Hotkey.Modifiers.option.rawValue)
+        return [
+            ("⌘",   cmd),
+            ("⌃",   ctl),
+            ("⌥",   opt),
+            ("⌘⌃",  cmd | ctl),
+            ("⌘⌥",  cmd | opt),
+            ("⌃⌥",  ctl | opt)
+        ]
+    }()
+
     var body: some View {
         Form {
-            LabeledContent("Toggle panel", value: "⇧⌘V")
-            LabeledContent("Plain text paste", value: "⌥⇧⌘V")
-            LabeledContent("Quick paste 1–9", value: "⌘1 … ⌘9")
-            Text("Hotkey customization will arrive in a future build.")
-                .font(.footnote).foregroundStyle(.secondary)
+            Section("Global") {
+                LabeledContent("Toggle panel") {
+                    ShortcutRecorderButton(shortcut: $panel)
+                        .onChange(of: panel) { _, new in new.save(Shortcut.panelKey) }
+                }
+                LabeledContent("Plain text paste") {
+                    ShortcutRecorderButton(shortcut: $panelPlain)
+                        .onChange(of: panelPlain) { _, new in new.save(Shortcut.panelPlainKey) }
+                }
+            }
+
+            Section("Panel") {
+                LabeledContent("Quick paste prefix") {
+                    Picker("", selection: $quickPasteModsRaw) {
+                        ForEach(Self.prefixOptions, id: \.raw) { opt in
+                            Text(opt.label).tag(opt.raw)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 110)
+                }
+                Text("Hold the prefix + 1…9 in the panel to paste the Nth card. Current: \(Shortcut.modsString(UInt32(quickPasteModsRaw)))1 … \(Shortcut.modsString(UInt32(quickPasteModsRaw)))9")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+
+            Section("Fixed (in-panel)") {
+                LabeledContent("Navigate cards",  value: "← →")
+                LabeledContent("Paste selected",  value: "⏎")
+                LabeledContent("Pin / Unpin",     value: "⌘P")
+                LabeledContent("Delete",          value: "⌫")
+                LabeledContent("Close",           value: "Esc")
+            }
+
+            Section {
+                Button("Reset to defaults") {
+                    panel = .defaultPanel
+                    panelPlain = .defaultPanelPlain
+                    quickPasteModsRaw = Int(Shortcut.defaultQuickPaste)
+                    panel.save(Shortcut.panelKey)
+                    panelPlain.save(Shortcut.panelPlainKey)
+                }
+            }
         }
         .formStyle(.grouped)
         .padding()

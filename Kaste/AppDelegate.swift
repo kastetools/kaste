@@ -4,8 +4,6 @@ import SwiftData
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var panelController: PanelController?
     private var clipboardMonitor: ClipboardMonitor?
-    private var hotkey: Hotkey?
-    private var plainTextHotkey: Hotkey?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if !Self.ensureSingleInstance() { return }
@@ -23,16 +21,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let controller = PanelController(modelContainer: AppContainer.shared.container)
         self.panelController = controller
 
-        // ⇧⌘V toggles panel.
-        hotkey = Hotkey(keyCode: 9, modifiers: [.command, .shift]) { [weak controller] in
-            controller?.toggle(plainText: false)
+        ShortcutManager.shared.onTogglePanel = { [weak controller] plain in
+            controller?.toggle(plainText: plain)
         }
-        // ⌥⇧⌘V toggles panel in plain-text paste mode.
-        plainTextHotkey = Hotkey(keyCode: 9, modifiers: [.command, .shift, .option]) { [weak controller] in
-            controller?.toggle(plainText: true)
-        }
-
-        Paster.requestAccessibilityIfNeeded()
+        ShortcutManager.shared.reload()
     }
 
     func applicationWillTerminate(_ notification: Notification) {

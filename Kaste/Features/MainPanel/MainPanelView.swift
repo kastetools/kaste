@@ -171,6 +171,7 @@ struct MainPanelView: View {
 private struct ClipItemListView: View {
     @Environment(\.modelContext) private var context
     @Query private var items: [ClipItem]
+    @AppStorage(Shortcut.quickPasteKey) private var quickPasteModsRaw: Int = Int(Shortcut.defaultQuickPaste)
 
     let plainTextMode: Bool
     let onPaste: (ClipItem) -> Void
@@ -232,7 +233,8 @@ private struct ClipItemListView: View {
             onSpace: {},
             onPin: { togglePinSelected() },
             onDelete: { deleteSelected() },
-            onDigit: { jumpTo($0) }
+            onDigit: { jumpTo($0) },
+            digitMods: Shortcut.nsMods(from: UInt32(quickPasteModsRaw))
         ))
         .onAppear { visibleCount = items.count }
         .onChange(of: items.count) { _, new in
