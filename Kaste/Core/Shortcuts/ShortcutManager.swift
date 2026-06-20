@@ -33,6 +33,13 @@ final class ShortcutManager {
     }
 
     private func rebind(panel: Shortcut, plain: Shortcut) {
+        // Tear down kernel registrations explicitly BEFORE creating new ones,
+        // so the old combos can't keep firing while the new ones are added.
+        panelHotkey?.unregister()
+        panelPlainHotkey?.unregister()
+        panelHotkey = nil
+        panelPlainHotkey = nil
+
         panelHotkey = Hotkey(keyCode: panel.keyCode,
                              modifiers: .init(rawValue: panel.mods)) { [weak self] in
             self?.onTogglePanel?(false)

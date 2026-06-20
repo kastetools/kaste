@@ -17,6 +17,7 @@ final class Hotkey {
 
     private let id: UInt32
     private var ref: EventHotKeyRef?
+    private var unregistered = false
 
     init(keyCode: UInt32, modifiers: Modifiers, action: @escaping () -> Void) {
         self.id = Hotkey.nextID
@@ -36,8 +37,19 @@ final class Hotkey {
         }
     }
 
-    deinit {
-        if let ref { UnregisterEventHotKey(ref) }
+    deinit { unregister() }
+
+    /// Tear down the Carbon registration and clear the action.
+    /// Idempotent. Call this from anywhere — don't rely on deinit timing,
+    /// because the next Hotkey's RegisterEventHotKey runs *before* ARC drops
+    /// the previous instance, so an old binding can linger briefly.
+    func unregister() {
+        guard !unregistered else { return }
+        unregistered = true
+        if let ref {
+            UnregisterEventHotKey(ref)
+            self.ref = nil
+        }
         Hotkey.actions[id] = nil
     }
 

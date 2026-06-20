@@ -16,12 +16,14 @@ struct SettingsView: View {
 private struct GeneralTab: View {
     @AppStorage("launchAtLogin") private var launchAtLogin = false
     @AppStorage("showInMenuBar") private var showInMenuBar = true
+    @AppStorage("autoPasteEnabled") private var autoPasteEnabled = true
     @AppStorage("panelWidth") private var panelWidth: String = PanelWidth.medium.rawValue
 
     var body: some View {
         Form {
             Toggle("Launch at login", isOn: $launchAtLogin)
             Toggle("Show menu bar icon", isOn: $showInMenuBar)
+            Toggle("Auto-paste on ⏎", isOn: $autoPasteEnabled)
             Picker("Panel width", selection: $panelWidth) {
                 ForEach(PanelWidth.allCases) { w in
                     Text(w.label).tag(w.rawValue)

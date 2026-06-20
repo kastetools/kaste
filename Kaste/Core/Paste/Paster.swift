@@ -5,6 +5,7 @@ enum Paster {
     /// If Accessibility is not granted yet, copies to the pasteboard and shows
     /// our own prompt — the system prompt is never triggered automatically.
     static func paste(_ item: ClipItem, plainTextOnly: Bool) {
+        let autoPaste = (UserDefaults.standard.object(forKey: "autoPasteEnabled") as? Bool) ?? true
         let trusted = AXIsProcessTrusted()
         let pb = NSPasteboard.general
         pb.clearContents()
@@ -33,6 +34,9 @@ enum Paster {
 
         item.lastUsedAt = Date()
         item.useCount += 1
+
+        // Auto-paste off → just leave content on the pasteboard.
+        guard autoPaste else { return }
 
         guard trusted else {
             showAccessibilityAlert()
