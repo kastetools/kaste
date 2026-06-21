@@ -27,12 +27,21 @@ struct KeyHandler: NSViewRepresentable {
     }
 
     final class KeyView: NSView {
+        /// The currently-installed KeyView for the panel — used by
+        /// SearchField to hand keyboard focus back when Esc is pressed.
+        static weak var activeView: KeyView?
+
         var handler: KeyHandler?
         override var acceptsFirstResponder: Bool { true }
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
-            window?.makeFirstResponder(self)
+            if window != nil {
+                Self.activeView = self
+                window?.makeFirstResponder(self)
+            } else if Self.activeView === self {
+                Self.activeView = nil
+            }
         }
 
         override func keyDown(with event: NSEvent) {
