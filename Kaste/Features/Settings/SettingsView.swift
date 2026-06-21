@@ -171,16 +171,94 @@ private struct ShortcutsTab: View {
 }
 
 private struct AboutTab: View {
+    @State private var checking = false
+    @State private var latest: UpdateChecker.ReleaseInfo? = nil
+    @State private var status: String = ""
+    @State private var installing = false
+
+    private var currentVersion: String { UpdateChecker.currentVersion() }
+
+    private var hasNewer: Bool {
+        guard let latest else { return false }
+        return UpdateChecker.isNewer(latest.version, than: currentVersion)
+    }
+
     var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 12) {
             Image(systemName: "doc.on.clipboard.fill")
                 .resizable().scaledToFit().frame(width: 64, height: 64)
                 .foregroundStyle(.tint)
             Text("Kaste").font(.title2.weight(.semibold))
-            Text("v0.1.0").foregroundStyle(.secondary)
+            Text("v\(currentVersion)").foregroundStyle(.secondary)
             Text("Native macOS clipboard manager.")
                 .font(.footnote).foregroundStyle(.tertiary)
+
+            Divider().padding(.vertical, 4)
+
+            HStack(spacing: 8) {
+                Button(checking ? "Checking…" : "Check for updates") {
+                    Task { await check() }
+                }
+                .disabled(checking || installing)
+
+                if hasNewer, let latest {
+                    Button(installing ? "Installing…" : "Download v\(latest.version)") {
+                        Task { await install(latest) }
+                    }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(installing)
+                }
+            }
+
+            if !status.isEmpty {
+                Text(status).font(.footnote).foregroundStyle(.secondary)
+            }
+            if hasNewer, let latest {
+                Link("View release notes",
+                     destination: latest.htmlURL)
+                    .font(.footnote)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding()
+    }
+
+    @MainActor
+    private func check() async {
+        checking = true
+        status = "Checking GitHub…"
+        defer { checking = false }
+        do {
+            let info = try await UpdateChecker.fetchLatest()
+            latest = info
+            if UpdateChecker.isNewer(info.version, than: currentVersion) {
+                status = "v\(info.version) is available."
+            } else {
+                status = "✓ You’re on the latest version."
+            }
+        } catch {
+            status = "Failed: \(error.localizedDescription)"
+        }
+    }
+
+    @MainActor
+    private func install(_ info: UpdateChecker.ReleaseInfo) async {
+        let alert = NSAlert()
+        alert.messageText = "Download and install v\(info.version)?"
+        alert.informativeText = "Kaste will download the latest DMG, replace /Applications/Kaste.app, then relaunch. Unsaved settings panels will close."
+        alert.addButton(withTitle: "Install")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        installing = true
+        status = "Downloading v\(info.version)…"
+        defer { installing = false }
+        do {
+            try await UpdateChecker.downloadAndInstall(info)
+            // If we’re still here, NSApp.terminate ran but completion happened
+            // (e.g., user dismissed); leave status as is.
+        } catch {
+            status = "Install failed: \(error.localizedDescription)"
+        }
     }
 }
