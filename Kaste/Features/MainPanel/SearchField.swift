@@ -32,7 +32,12 @@ struct SearchField: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: NSTextField, context: Context) {
-        if nsView.stringValue != text { nsView.stringValue = text }
+        // Never mutate stringValue while the field editor is active — AppKit
+        // can interpret that as endEditing:, drop first responder, and let
+        // KeyView snipe focus during the next re-render.
+        if !SearchFieldFocus.isActive && nsView.stringValue != text {
+            nsView.stringValue = text
+        }
         (nsView as? IMEAwareTextField)?.onCancel = onCancel
 
         if focusTrigger != context.coordinator.lastFocusTrigger {

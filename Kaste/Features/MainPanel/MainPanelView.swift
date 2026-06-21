@@ -263,11 +263,12 @@ private struct ClipItemListView: View {
 
     var body: some View {
         let visible = displayedItems
-        return Group {
+        return ZStack {
+            cards(visible)
+                .opacity(visible.isEmpty ? 0 : 1)
+                .allowsHitTesting(!visible.isEmpty)
             if visible.isEmpty {
                 emptyState
-            } else {
-                cards(visible)
             }
         }
         .background {
