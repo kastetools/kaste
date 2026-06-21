@@ -36,11 +36,19 @@ struct KeyHandler: NSViewRepresentable {
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
-            if window != nil {
-                Self.activeView = self
-                window?.makeFirstResponder(self)
-            } else if Self.activeView === self {
-                Self.activeView = nil
+            guard let window else {
+                if Self.activeView === self { Self.activeView = nil }
+                return
+            }
+            Self.activeView = self
+
+            // Don't steal focus from a text field that's already being edited
+            // (e.g., the search field — clearing it down to "" should not pop
+            // focus out from under the user).
+            let fr = window.firstResponder
+            let isEditingText = (fr is NSText) || (fr is NSTextField) || (fr is NSTextView)
+            if !isEditingText {
+                window.makeFirstResponder(self)
             }
         }
 
