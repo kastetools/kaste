@@ -21,7 +21,7 @@ struct MainPanelView: View {
     @State private var filter: ClipKind? = nil
     @State private var tab: Tab = .all
     @State private var listCount: Int = 0
-    @FocusState private var searchFocused: Bool
+    @State private var searchFocusTick: Int = 0
 
     enum Tab: Hashable, CaseIterable { case all, pinned }
 
@@ -76,6 +76,10 @@ struct MainPanelView: View {
                 guard let idx = all.firstIndex(of: tab) else { return }
                 let next = forward ? (idx + 1) % all.count : (idx - 1 + all.count) % all.count
                 tab = all[next]
+            }
+            session.onTypedCharacter = { c in
+                search.append(c)
+                searchFocusTick &+= 1
             }
         }
     }
@@ -141,7 +145,9 @@ struct MainPanelView: View {
 
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                SearchField(text: $search, placeholder: "Search") {
+                SearchField(text: $search,
+                            placeholder: "Search",
+                            focusTrigger: searchFocusTick) {
                     if search.isEmpty { onClose() } else { search = "" }
                 }
                 .frame(width: 200, height: 18)
@@ -206,6 +212,8 @@ private struct ClipItemListView: View {
     @Query private var items: [ClipItem]
     @AppStorage(Shortcut.quickPasteKey) private var quickPasteModsRaw: Int = Int(Shortcut.defaultQuickPaste)
 
+    let filter: ClipKind?
+    let search: String
     let isActive: Bool
     @Binding var visibleCount: Int
 
@@ -224,22 +232,17 @@ private struct ClipItemListView: View {
         isActive: Bool,
         visibleCount: Binding<Int>
     ) {
+        self.filter = filter
+        self.search = search
         self.isActive = isActive
         self._visibleCount = visibleCount
 
-        // Captured-by-macro values must be locals.
+        // Descriptor only depends on `tab` so that switching filter/search does
+        // NOT refetch from SwiftData — the body filters in memory instead.
         let onlyPinned = (tab == .pinned)
-        let hasFilter = (filter != nil)
-        let filterRaw = filter?.rawValue ?? ""
-        let hasSearch = !search.isEmpty
-        let q = search.lowercased()
-
         let predicate = #Predicate<ClipItem> { item in
-            (!onlyPinned || item.isPinned) &&
-            (!hasFilter || item.kindRaw == filterRaw) &&
-            (!hasSearch || (item.searchKey?.contains(q) ?? false))
+            !onlyPinned || item.isPinned
         }
-
         var descriptor = FetchDescriptor<ClipItem>(
             predicate: predicate,
             sortBy: [SortDescriptor(\.lastUsedAt, order: .reverse)]
@@ -248,22 +251,33 @@ private struct ClipItemListView: View {
         _items = Query(descriptor)
     }
 
+    private var displayedItems: [ClipItem] {
+        let q = search.lowercased()
+        let filterRaw = filter?.rawValue
+        if filterRaw == nil && q.isEmpty { return items }
+        return items.filter { item in
+            (filterRaw == nil || item.kindRaw == filterRaw!) &&
+            (q.isEmpty || (item.searchKey ?? "").contains(q))
+        }
+    }
+
     var body: some View {
-        Group {
-            if items.isEmpty {
+        let visible = displayedItems
+        return Group {
+            if visible.isEmpty {
                 emptyState
             } else {
-                cards
+                cards(visible)
             }
         }
         .background {
             if isActive {
                 KeyHandler(
-                    onLeft: { move(-1) },
-                    onRight: { move(1) },
+                    onLeft: { move(-1, visible) },
+                    onRight: { move(1, visible) },
                     onPrevTab: { session.onSwitchTab(false) },
                     onNextTab: { session.onSwitchTab(true) },
-                    onEnter: { commitSelected() },
+                    onEnter: { commit(visible) },
                     onEsc: {
                         if session.previewItem != nil {
                             session.previewItem = nil
@@ -273,36 +287,37 @@ private struct ClipItemListView: View {
                             onClose()
                         }
                     },
-                    onSpace: { togglePreview() },
-                    onPin: { togglePinSelected() },
-                    onDelete: { deleteSelected() },
-                    onDigit: { jumpTo($0) },
+                    onSpace: { togglePreview(visible) },
+                    onPin: { togglePin(visible) },
+                    onDelete: { deleteAt(visible) },
+                    onDigit: { jumpTo($0, visible) },
+                    onTypedCharacter: { c in session.onTypedCharacter(c) },
                     digitMods: Shortcut.nsMods(from: UInt32(quickPasteModsRaw))
                 )
             }
         }
-        .onAppear { if isActive { visibleCount = items.count } }
-        .onChange(of: items.count) { _, new in
+        .onAppear { if isActive { visibleCount = visible.count } }
+        .onChange(of: visible.count) { _, new in
             if isActive { visibleCount = new }
             if selection >= new { selection = max(0, new - 1) }
         }
         .onChange(of: isActive) { _, active in
-            if active { visibleCount = items.count }
+            if active { visibleCount = visible.count }
         }
     }
 
-    private var cards: some View {
+    private func cards(_ visible: [ClipItem]) -> some View {
         ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(alignment: .center, spacing: 12) {
-                    ForEach(Array(items.enumerated()), id: \.element.id) { idx, item in
+                    ForEach(Array(visible.enumerated()), id: \.element.id) { idx, item in
                         ClipCardView(
                             item: item,
                             index: idx,
                             isSelected: idx == selection
                         )
                         .id(item.id)
-                        .onTapGesture(count: 2) { selection = idx; commitSelected() }
+                        .onTapGesture(count: 2) { selection = idx; commit(visible) }
                         .simultaneousGesture(
                             TapGesture(count: 1).onEnded { selection = idx }
                         )
@@ -337,9 +352,9 @@ private struct ClipItemListView: View {
             }
             .frame(maxWidth: .infinity)
             .onChange(of: selection) { _, new in
-                if new < items.count {
+                if new < visible.count {
                     withAnimation(.easeOut(duration: 0.15)) {
-                        proxy.scrollTo(items[new].id, anchor: .center)
+                        proxy.scrollTo(visible[new].id, anchor: .center)
                     }
                 }
             }
@@ -360,41 +375,41 @@ private struct ClipItemListView: View {
 
     // MARK: - Actions
 
-    private func move(_ delta: Int) {
-        guard !items.isEmpty else { return }
-        selection = (selection + delta).clamped(to: 0...(items.count - 1))
+    private func move(_ delta: Int, _ visible: [ClipItem]) {
+        guard !visible.isEmpty else { return }
+        selection = (selection + delta).clamped(to: 0...(visible.count - 1))
     }
 
-    private func commitSelected() {
-        guard items.indices.contains(selection) else { return }
-        onPaste(items[selection])
+    private func commit(_ visible: [ClipItem]) {
+        guard visible.indices.contains(selection) else { return }
+        onPaste(visible[selection])
     }
 
-    private func togglePreview() {
+    private func togglePreview(_ visible: [ClipItem]) {
         if session.previewItem != nil {
             session.previewItem = nil
-        } else if items.indices.contains(selection) {
-            session.previewItem = items[selection]
+        } else if visible.indices.contains(selection) {
+            session.previewItem = visible[selection]
         }
     }
 
-    private func togglePinSelected() {
-        guard items.indices.contains(selection) else { return }
-        items[selection].isPinned.toggle()
+    private func togglePin(_ visible: [ClipItem]) {
+        guard visible.indices.contains(selection) else { return }
+        visible[selection].isPinned.toggle()
         try? context.save()
     }
 
-    private func deleteSelected() {
-        guard items.indices.contains(selection) else { return }
-        context.delete(items[selection])
+    private func deleteAt(_ visible: [ClipItem]) {
+        guard visible.indices.contains(selection) else { return }
+        context.delete(visible[selection])
         try? context.save()
     }
 
-    private func jumpTo(_ n: Int) {
+    private func jumpTo(_ n: Int, _ visible: [ClipItem]) {
         let idx = n - 1
-        guard items.indices.contains(idx) else { return }
+        guard visible.indices.contains(idx) else { return }
         selection = idx
-        commitSelected()
+        commit(visible)
     }
 }
 

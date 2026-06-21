@@ -12,6 +12,7 @@ struct KeyHandler: NSViewRepresentable {
     var onPin: () -> Void
     var onDelete: () -> Void
     var onDigit: (Int) -> Void
+    var onTypedCharacter: ((String) -> Void)? = nil
     var digitMods: NSEvent.ModifierFlags = .command
 
     func makeNSView(context: Context) -> NSView {
@@ -55,7 +56,18 @@ struct KeyHandler: NSViewRepresentable {
                     if digit > 0 { h.onDigit(digit) }
                 } else { super.keyDown(with: event) }
             default:
-                super.keyDown(with: event)
+                let blocking: NSEvent.ModifierFlags = [.command, .control, .option]
+                if mods.intersection(blocking).isEmpty,
+                   let chars = event.charactersIgnoringModifiers,
+                   chars.count >= 1,
+                   let scalar = chars.unicodeScalars.first,
+                   scalar.value >= 0x20, scalar.value != 0x7F,
+                   let forward = h.onTypedCharacter
+                {
+                    forward(event.characters ?? chars)
+                } else {
+                    super.keyDown(with: event)
+                }
             }
         }
 

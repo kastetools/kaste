@@ -4,6 +4,7 @@ import AppKit
 struct SearchField: NSViewRepresentable {
     @Binding var text: String
     var placeholder: String
+    var focusTrigger: Int = 0
     var onCancel: () -> Void
 
     func makeNSView(context: Context) -> NSTextField {
@@ -24,12 +25,24 @@ struct SearchField: NSViewRepresentable {
     func updateNSView(_ nsView: NSTextField, context: Context) {
         if nsView.stringValue != text { nsView.stringValue = text }
         (nsView as? IMEAwareTextField)?.onCancel = onCancel
+
+        if focusTrigger != context.coordinator.lastFocusTrigger {
+            context.coordinator.lastFocusTrigger = focusTrigger
+            DispatchQueue.main.async {
+                guard let window = nsView.window else { return }
+                window.makeFirstResponder(nsView)
+                if let editor = nsView.currentEditor() as? NSTextView {
+                    editor.selectedRange = NSRange(location: nsView.stringValue.count, length: 0)
+                }
+            }
+        }
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     final class Coordinator: NSObject, NSTextFieldDelegate {
         var parent: SearchField
+        var lastFocusTrigger: Int = 0
         init(_ parent: SearchField) { self.parent = parent }
         func controlTextDidChange(_ notification: Notification) {
             guard let tf = notification.object as? NSTextField else { return }

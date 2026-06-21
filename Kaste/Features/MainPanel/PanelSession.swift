@@ -8,4 +8,5 @@ final class PanelSession: ObservableObject {
     var onPaste: (ClipItem) -> Void = { _ in }
     var onClose: () -> Void = {}
     var onSwitchTab: (_ forward: Bool) -> Void = { _ in }
+    var onTypedCharacter: (_ chars: String) -> Void = { _ in }
 }
