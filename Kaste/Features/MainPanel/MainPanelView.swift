@@ -309,7 +309,7 @@ private struct ClipItemListView: View {
     private func cards(_ visible: [ClipItem]) -> some View {
         ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(alignment: .center, spacing: 12) {
+                LazyHStack(alignment: .center, spacing: 12) {
                     ForEach(Array(visible.enumerated()), id: \.element.id) { idx, item in
                         ClipCardView(
                             item: item,
@@ -351,6 +351,7 @@ private struct ClipItemListView: View {
                 .padding(.vertical, 4)
             }
             .frame(maxWidth: .infinity)
+            .animation(.none, value: visible.count)
             .onChange(of: selection) { _, new in
                 if new < visible.count {
                     withAnimation(.easeOut(duration: 0.15)) {
