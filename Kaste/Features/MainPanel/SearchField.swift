@@ -1,6 +1,15 @@
 import SwiftUI
 import AppKit
 
+/// Tracks whether the search field's field editor currently owns first
+/// responder. Used by KeyHandler.KeyView to decide whether it's safe to
+/// auto-grab focus during view-hierarchy churn (search re-filtering can
+/// briefly leave window.firstResponder in a state that fools a direct
+/// check). Updated via NSTextFieldDelegate begin/end editing callbacks.
+enum SearchFieldFocus {
+    static var isActive: Bool = false
+}
+
 struct SearchField: NSViewRepresentable {
     @Binding var text: String
     var placeholder: String
@@ -44,9 +53,18 @@ struct SearchField: NSViewRepresentable {
         var parent: SearchField
         var lastFocusTrigger: Int = 0
         init(_ parent: SearchField) { self.parent = parent }
+
         func controlTextDidChange(_ notification: Notification) {
             guard let tf = notification.object as? NSTextField else { return }
             parent.text = tf.stringValue
+        }
+
+        func controlTextDidBeginEditing(_ notification: Notification) {
+            SearchFieldFocus.isActive = true
+        }
+
+        func controlTextDidEndEditing(_ notification: Notification) {
+            SearchFieldFocus.isActive = false
         }
     }
 }

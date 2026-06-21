@@ -42,9 +42,12 @@ struct KeyHandler: NSViewRepresentable {
             }
             Self.activeView = self
 
-            // Don't steal focus from a text field that's already being edited
-            // (e.g., the search field — clearing it down to "" should not pop
-            // focus out from under the user).
+            // The search field's begin/end-editing delegate authoritatively
+            // tracks whether the user is currently typing in it. Don't peek at
+            // window.firstResponder here because it can briefly look "free"
+            // during SwiftUI re-renders triggered by search input.
+            if SearchFieldFocus.isActive { return }
+
             let fr = window.firstResponder
             let isEditingText = (fr is NSText) || (fr is NSTextField) || (fr is NSTextView)
             if !isEditingText {
