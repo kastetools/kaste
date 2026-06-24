@@ -5,11 +5,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var panelController: PanelController?
     private var clipboardMonitor: ClipboardMonitor?
     private var snapshotTimer: Timer?
+    private var napDisabler: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if !Self.ensureSingleInstance() { return }
 
         NSApp.setActivationPolicy(.accessory)
+
+        // Tell macOS we must respond to the global ⇧⌘V instantly. Without
+        // this, App Nap can suspend the process after long idle and the
+        // first hotkey press is dropped/delayed — the user then has to press
+        // it again to bring up the panel.
+        napDisabler = ProcessInfo.processInfo.beginActivity(
+            options: [.userInitiated, .latencyCritical],
+            reason: "Kaste must respond to its global hotkey without delay"
+        )
 
         let context = AppContainer.shared.container.mainContext
         let monitor = ClipboardMonitor(context: context)
@@ -40,6 +50,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        if let token = napDisabler {
+            ProcessInfo.processInfo.endActivity(token)
+            napDisabler = nil
+        }
         snapshotTimer?.invalidate()
         snapshotTimer = nil
         clipboardMonitor?.stop()
