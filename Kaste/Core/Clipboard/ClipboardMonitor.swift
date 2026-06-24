@@ -116,19 +116,50 @@ final class ClipboardMonitor {
         frontApp: NSRunningApplication?,
         make: () -> ClipItem
     ) {
-        let descriptor = FetchDescriptor<ClipItem>(predicate: #Predicate { $0.contentHash == hash })
-        if let existing = try? context.fetch(descriptor).first {
-            existing.lastUsedAt = Date()
-            existing.useCount += 1
-            try? context.save()
-            return
-        }
+        // We deliberately do NOT mutate an existing matching row here.
+        // Touching properties on a row that the row cache thinks exists
+        // but has actually been purged by retention/capacity cleanup will
+        // crash inside Core Data's fault-fulfillment (_PFFaultHandlerLookupRow)
+        // and Swift cannot catch that NSException → SIGABRT → mid-write SQLite
+        // file gets truncated and the whole history vanishes on relaunch.
+        //
+        // Strategy: always insert a fresh row, then dedup in a separate task.
+        // The dedup pass keeps the newest row per content hash, so the
+        // visible behaviour is identical to "bump lastUsedAt" without the
+        // dangerous in-place mutation.
         let item = make()
         context.insert(item)
-        try? context.save()
+        do {
+            try context.save()
+        } catch {
+            NSLog("Kaste: ClipboardMonitor insert save failed: \(error)")
+        }
         Task { @MainActor in
+            self.deduplicate(hash: hash)
             self.enforceRetention()
             self.enforceCapacity()
+        }
+    }
+
+    /// Collapse rows that share `contentHash`: keep the most recent (or any
+    /// pinned), delete the rest. Safe to call repeatedly.
+    private func deduplicate(hash: String) {
+        let descriptor = FetchDescriptor<ClipItem>(
+            predicate: #Predicate { $0.contentHash == hash },
+            sortBy: [SortDescriptor(\.lastUsedAt, order: .reverse)]
+        )
+        guard let matches = (try? context.fetch(descriptor)), matches.count > 1 else { return }
+        // Keep the newest non-deleted row, preserving any pinned ones.
+        var kept = false
+        for item in matches {
+            if item.isPinned { continue }
+            if !kept { kept = true; continue }
+            context.delete(item)
+        }
+        do {
+            try context.save()
+        } catch {
+            NSLog("Kaste: dedup save failed: \(error)")
         }
     }
 

@@ -4,6 +4,7 @@ import SwiftData
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var panelController: PanelController?
     private var clipboardMonitor: ClipboardMonitor?
+    private var snapshotTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if !Self.ensureSingleInstance() { return }
@@ -26,10 +27,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             controller?.toggle(plainText: plain)
         }
         ShortcutManager.shared.reload()
+
+        // Take an online SQLite backup every 30 min so a future crash mid-write
+        // can recover from a recent consistent snapshot.
+        let timer = Timer.scheduledTimer(withTimeInterval: StoreManager.backupInterval,
+                                         repeats: true) { _ in
+            StoreManager.snapshotNow()
+        }
+        timer.tolerance = 60
+        RunLoop.main.add(timer, forMode: .common)
+        snapshotTimer = timer
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        snapshotTimer?.invalidate()
+        snapshotTimer = nil
         clipboardMonitor?.stop()
+        // Capture a final snapshot on clean shutdown so the recovery path
+        // has the freshest possible history if the next launch finds a
+        // broken store.
+        StoreManager.snapshotNow()
     }
 
     private static func ensureSingleInstance() -> Bool {

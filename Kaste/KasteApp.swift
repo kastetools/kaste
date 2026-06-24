@@ -25,10 +25,7 @@ final class AppContainer {
 
     private init() {
         do {
-            container = try ModelContainer(
-                for: ClipItem.self,
-                configurations: ModelConfiguration(isStoredInMemoryOnly: false)
-            )
+            container = try StoreManager.makeContainer()
         } catch {
             fatalError("Failed to create ModelContainer: \(error)")
         }
