@@ -7,6 +7,7 @@ struct KeyHandler: NSViewRepresentable {
     var onPrevTab: () -> Void = {}
     var onNextTab: () -> Void = {}
     var onEnter: () -> Void
+    var onCommandEnter: () -> Void = {}
     var onEsc: () -> Void
     var onSpace: () -> Void
     var onPin: () -> Void
@@ -63,7 +64,8 @@ struct KeyHandler: NSViewRepresentable {
                 if mods.contains(.command) { h.onPrevTab() } else { h.onLeft() }
             case 124:                                   // →
                 if mods.contains(.command) { h.onNextTab() } else { h.onRight() }
-            case 36, 76: h.onEnter()                   // return / numpad enter
+            case 36, 76:                                // return / numpad enter
+                if mods.contains(.command) { h.onCommandEnter() } else { h.onEnter() }
             case 53: h.onEsc()                         // esc
             case 49: h.onSpace()                       // space
             case 35:                                   // P

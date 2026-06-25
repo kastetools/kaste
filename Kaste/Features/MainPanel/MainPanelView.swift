@@ -279,6 +279,7 @@ private struct ClipItemListView: View {
                     onPrevTab: { session.onSwitchTab(false) },
                     onNextTab: { session.onSwitchTab(true) },
                     onEnter: { commit(visible) },
+                    onCommandEnter: { quickLook(visible) },
                     onEsc: {
                         if session.previewItem != nil {
                             session.previewItem = nil
@@ -385,6 +386,11 @@ private struct ClipItemListView: View {
     private func commit(_ visible: [ClipItem]) {
         guard visible.indices.contains(selection) else { return }
         onPaste(visible[selection])
+    }
+
+    private func quickLook(_ visible: [ClipItem]) {
+        guard visible.indices.contains(selection) else { return }
+        ItemActions.preview(visible[selection])
     }
 
     private func togglePreview(_ visible: [ClipItem]) {

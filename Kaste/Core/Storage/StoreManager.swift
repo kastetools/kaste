@@ -38,6 +38,13 @@ enum StoreManager {
     /// On success, take an immediate snapshot capturing the just-recovered
     /// state.
     static func makeContainer() throws -> ModelContainer {
+        // Pre-1.1.17 builds used SwiftData's implicit default location at
+        // ~/Library/Application Support/default.store (no bundleID subfolder).
+        // 1.1.17 introduced an explicit URL inside the bundleID subfolder.
+        // Migrate any orphaned legacy store into the managed location so
+        // upgraders don't appear to lose all their history.
+        migrateLegacyStoreIfNeeded()
+
         do {
             let container = try ModelContainer(
                 for: ClipItem.self,
@@ -54,6 +61,47 @@ enum StoreManager {
             )
             snapshotNow()
             return container
+        }
+    }
+
+    // MARK: - Legacy migration
+
+    private static func migrateLegacyStoreIfNeeded() {
+        let appSupport = storeDirectory.deletingLastPathComponent()
+        let legacyMain = appSupport.appending(path: storeFilename)
+        guard FileManager.default.fileExists(atPath: legacyMain.path) else { return }
+
+        // Only migrate if the managed location is empty/missing — never trample
+        // a real store that already lives there.
+        let managedMain = storeURL
+        let managedExists = FileManager.default.fileExists(atPath: managedMain.path)
+        let managedSize = (try? FileManager.default.attributesOfItem(atPath: managedMain.path)[.size] as? Int) ?? 0
+        let legacySize = (try? FileManager.default.attributesOfItem(atPath: legacyMain.path)[.size] as? Int) ?? 0
+
+        // If the managed store has meaningful contents, leave both alone.
+        if managedExists && managedSize > legacySize / 4 { return }
+
+        NSLog("Kaste: migrating legacy store \(legacyMain.path) -> \(managedMain.path)")
+
+        // Move the empty/tiny managed store out of the way so the migrated one
+        // takes its place cleanly.
+        let stamp = timestamp()
+        for ext in liveExtensions {
+            let stale = storeDirectory.appending(path: storeFilename + ext)
+            if FileManager.default.fileExists(atPath: stale.path) {
+                let parked = storeDirectory.appending(path: "\(storeFilename)\(ext).pre-migrate.\(stamp)")
+                try? FileManager.default.moveItem(at: stale, to: parked)
+            }
+        }
+        for ext in liveExtensions {
+            let src = appSupport.appending(path: storeFilename + ext)
+            guard FileManager.default.fileExists(atPath: src.path) else { continue }
+            let dst = storeDirectory.appending(path: storeFilename + ext)
+            do {
+                try FileManager.default.moveItem(at: src, to: dst)
+            } catch {
+                NSLog("Kaste: legacy migrate failed for \(ext): \(error)")
+            }
         }
     }
 
