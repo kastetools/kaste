@@ -28,5 +28,9 @@
 	<string>Kaste needs Accessibility access to paste into the active app.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>© 2026 Kaste</string>
+	<key>NSSupportsAutomaticTermination</key>
+	<false/>
+	<key>NSSupportsSuddenTermination</key>
+	<false/>
 </dict>
 </plist>

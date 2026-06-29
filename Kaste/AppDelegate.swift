@@ -5,6 +5,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var panelController: PanelController?
     private var clipboardMonitor: ClipboardMonitor?
     private var snapshotTimer: Timer?
+    private var heartbeatTimer: Timer?
     private var napDisabler: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -17,7 +18,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // first hotkey press is dropped/delayed — the user then has to press
         // it again to bring up the panel.
         napDisabler = ProcessInfo.processInfo.beginActivity(
-            options: [.userInitiated, .latencyCritical],
+            options: [
+                .userInitiated,
+                .latencyCritical,
+                .automaticTerminationDisabled,
+                .suddenTerminationDisabled
+            ],
             reason: "Kaste must respond to its global hotkey without delay"
         )
 
@@ -47,6 +53,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         timer.tolerance = 60
         RunLoop.main.add(timer, forMode: .common)
         snapshotTimer = timer
+
+        // Heartbeat: a cheap timer that ticks the main run loop every 3s so
+        // macOS doesn't class the process as fully idle. The closure is a
+        // no-op; the runloop wake itself is the point. Without this, the
+        // first ⇧⌘V after a long idle stretch sometimes lands while the
+        // process is mid-wake and gets dropped.
+        let hb = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { _ in }
+        hb.tolerance = 1
+        RunLoop.main.add(hb, forMode: .common)
+        heartbeatTimer = hb
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -56,6 +72,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         snapshotTimer?.invalidate()
         snapshotTimer = nil
+        heartbeatTimer?.invalidate()
+        heartbeatTimer = nil
         clipboardMonitor?.stop()
         // Capture a final snapshot on clean shutdown so the recovery path
         // has the freshest possible history if the next launch finds a
