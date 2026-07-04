@@ -53,8 +53,13 @@ final class PanelController: NSObject {
             panel.setFrame(start, display: false)
             panel.alphaValue = 0
         }
+        // Deliberately DO NOT call `NSApp.activate(ignoringOtherApps: true)`.
+        // We're an accessory app with a nonactivating panel — activating the
+        // whole app forcibly demotes whatever window was frontmost, which
+        // shows up as a window-switch flicker under custom shortcuts like
+        // ⌘⌥V. makeKeyAndOrderFront alone is enough to give the panel key
+        // status without disturbing the user's app focus.
         panel.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
 
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = showDuration

@@ -4,7 +4,8 @@ import AppKit
 final class ShortcutManager {
     static let shared = ShortcutManager()
 
-    var onTogglePanel: ((_ plainText: Bool) -> Void)?
+    var onTogglePanel: (() -> Void)?
+    var onPlainPasteCurrent: (() -> Void)?
 
     private var panelHotkey: Hotkey?
     private var panelPlainHotkey: Hotkey?
@@ -42,11 +43,11 @@ final class ShortcutManager {
 
         panelHotkey = Hotkey(keyCode: panel.keyCode,
                              modifiers: .init(rawValue: panel.mods)) { [weak self] in
-            self?.onTogglePanel?(false)
+            self?.onTogglePanel?()
         }
         panelPlainHotkey = Hotkey(keyCode: plain.keyCode,
                                   modifiers: .init(rawValue: plain.mods)) { [weak self] in
-            self?.onTogglePanel?(true)
+            self?.onPlainPasteCurrent?()
         }
         current = (panel, plain)
     }

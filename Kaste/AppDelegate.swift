@@ -39,8 +39,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.warmUp()
         self.panelController = controller
 
-        ShortcutManager.shared.onTogglePanel = { [weak controller] plain in
-            controller?.toggle(plainText: plain)
+        ShortcutManager.shared.onTogglePanel = { [weak controller] in
+            controller?.toggle(plainText: false)
+        }
+        ShortcutManager.shared.onPlainPasteCurrent = {
+            Paster.plainPasteCurrent()
         }
         ShortcutManager.shared.reload()
 

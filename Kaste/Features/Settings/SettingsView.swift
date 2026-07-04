@@ -127,7 +127,7 @@ private struct ShortcutsTab: View {
                     ShortcutRecorderButton(shortcut: $panel)
                         .onChange(of: panel) { _, new in new.save(Shortcut.panelKey) }
                 }
-                LabeledContent("Plain text paste") {
+                LabeledContent("Paste as plain text") {
                     ShortcutRecorderButton(shortcut: $panelPlain)
                         .onChange(of: panelPlain) { _, new in new.save(Shortcut.panelPlainKey) }
                 }

@@ -9,8 +9,13 @@ struct Shortcut: Equatable, Codable {
     static let panelPlainKey  = "shortcut.panelPlain"
     static let quickPasteKey  = "shortcut.quickPasteMods"
 
-    static let defaultPanel       = Shortcut(keyCode: 9, mods: UInt32(cmdKey) | UInt32(shiftKey))
-    static let defaultPanelPlain  = Shortcut(keyCode: 9, mods: UInt32(cmdKey) | UInt32(shiftKey) | UInt32(optionKey))
+    // Toggle panel: ⌘⌥V. Uncommon combo so we don't clash with the plain-paste
+    // one below or the many apps that map ⇧⌘V to their own plain-paste.
+    static let defaultPanel       = Shortcut(keyCode: 9, mods: UInt32(cmdKey) | UInt32(optionKey))
+    // Plain-paste-latest: ⇧⌘V. Matches VS Code / Chrome / Slack convention for
+    // "paste as plain text" and takes over what the OS already tries to route
+    // to per-app plain-paste handlers.
+    static let defaultPanelPlain  = Shortcut(keyCode: 9, mods: UInt32(cmdKey) | UInt32(shiftKey))
     static let defaultQuickPaste  = UInt32(cmdKey)
 
     static func load(_ key: String, fallback: Shortcut) -> Shortcut {

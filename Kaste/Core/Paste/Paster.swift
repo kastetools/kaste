@@ -94,4 +94,29 @@ enum Paster {
     }
 
     static var isAccessibilityTrusted: Bool { AXIsProcessTrusted() }
+
+    /// Strip formatting from whatever is currently on the pasteboard and
+    /// synthesize ⌘V into the frontmost app. No panel is shown; this is the
+    /// global "plain paste" hotkey behaviour.
+    static func plainPasteCurrent() {
+        let autoPaste = (UserDefaults.standard.object(forKey: "autoPasteEnabled") as? Bool) ?? true
+        let pb = NSPasteboard.general
+        guard let text = pb.string(forType: .string), !text.isEmpty else { return }
+
+        pb.clearContents()
+        pb.setString(text, forType: .string)
+        // Mark internal so ClipboardMonitor ignores our round-trip.
+        if let first = pb.pasteboardItems?.first {
+            first.setData(Data(), forType: NSPasteboard.PasteboardType("app.kaste.internal"))
+        }
+
+        guard autoPaste else { return }
+        guard AXIsProcessTrusted() else {
+            showAccessibilityAlert()
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            sendCommandV()
+        }
+    }
 }
