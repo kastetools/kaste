@@ -42,7 +42,13 @@ struct SearchField: NSViewRepresentable {
 
         if focusTrigger != context.coordinator.lastFocusTrigger {
             context.coordinator.lastFocusTrigger = focusTrigger
+            // Dedup pending focus grabs so rapid updateNSView invocations
+            // don't queue N of them and race with user clicks.
+            let pending = context.coordinator.focusPending + 1
+            context.coordinator.focusPending = pending
             DispatchQueue.main.async {
+                guard context.coordinator.focusPending == pending else { return }
+                context.coordinator.focusPending = 0
                 guard let window = nsView.window else { return }
                 window.makeFirstResponder(nsView)
                 if let editor = nsView.currentEditor() as? NSTextView {
@@ -57,6 +63,7 @@ struct SearchField: NSViewRepresentable {
     final class Coordinator: NSObject, NSTextFieldDelegate {
         var parent: SearchField
         var lastFocusTrigger: Int = 0
+        var focusPending: Int = 0
         init(_ parent: SearchField) { self.parent = parent }
 
         func controlTextDidChange(_ notification: Notification) {

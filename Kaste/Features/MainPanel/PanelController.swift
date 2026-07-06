@@ -74,7 +74,7 @@ final class PanelController: NSObject {
 
     func hide() {
         animateOut { [weak self] in
-            self?.previousApp?.activate(options: [])
+            self?.previousApp?.activate()
         }
     }
 
@@ -82,7 +82,7 @@ final class PanelController: NSObject {
         let app = previousApp
         let plainText = session.plainTextMode
         animateOut {
-            app?.activate(options: [])
+            app?.activate()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.04) {
                 Paster.paste(item, plainTextOnly: plainText)
             }

@@ -1,10 +1,52 @@
 import SwiftUI
 import AppKit
 
-struct ClipCardView: View {
+/// Bounded cache of decoded NSImages keyed by ClipItem.id. Prevents
+/// re-decoding large TIFF/PNG blobs every time LazyHStack recycles a card,
+/// which was causing frame drops when scrolling through image-heavy history.
+enum ClipImageCache {
+    private static let cache: NSCache<NSString, NSImage> = {
+        let c = NSCache<NSString, NSImage>()
+        c.countLimit = 64
+        c.totalCostLimit = 128 * 1024 * 1024 // 128 MB
+        return c
+    }()
+
+    static func image(for id: UUID, data: Data) -> NSImage? {
+        let key = id.uuidString as NSString
+        if let hit = cache.object(forKey: key) { return hit }
+        guard let img = NSImage(data: data) else { return nil }
+        cache.setObject(img, forKey: key, cost: data.count)
+        return img
+    }
+
+    static func drop(_ id: UUID) {
+        cache.removeObject(forKey: id.uuidString as NSString)
+    }
+}
+
+struct ClipCardView: View, Equatable {
     let item: ClipItem
     let index: Int
     let isSelected: Bool
+
+    /// SwiftUI uses this via `.equatable()` to skip body evaluation when
+    /// nothing user-visible changed. We deliberately compare only stable/
+    /// identifying values — never touch properties that could fault on a
+    /// deleted @Model (the modelContext guard in body handles the render
+    /// side; == mirrors it so we don't return "unchanged" across a stale
+    /// vs. fresh reference and skip a needed re-draw).
+    static func == (a: ClipCardView, b: ClipCardView) -> Bool {
+        let aValid = a.item.modelContext != nil
+        let bValid = b.item.modelContext != nil
+        if aValid != bValid { return false }
+        if !aValid { return a.item.id == b.item.id }
+        return a.item.id == b.item.id
+            && a.item.isPinned == b.item.isPinned
+            && a.item.lastUsedAt == b.item.lastUsedAt
+            && a.index == b.index
+            && a.isSelected == b.isSelected
+    }
 
     private static let relativeFormatter: RelativeDateTimeFormatter = {
         let f = RelativeDateTimeFormatter()
@@ -100,7 +142,7 @@ struct ClipCardView: View {
     private var preview: some View {
         switch item.kind {
         case .image:
-            if let data = item.imageData, let img = NSImage(data: data) {
+            if let data = item.imageData, let img = ClipImageCache.image(for: item.id, data: data) {
                 Image(nsImage: img)
                     .resizable()
                     .scaledToFit()
@@ -123,8 +165,8 @@ struct ClipCardView: View {
                 Text((item.filePaths?.first as NSString?)?.lastPathComponent ?? "")
                     .font(.system(size: 11)).lineLimit(2)
                     .multilineTextAlignment(.center)
-                if (item.filePaths?.count ?? 0) > 1 {
-                    Text("+\((item.filePaths!.count) - 1) more")
+                if let extra = item.filePaths.map({ $0.count - 1 }), extra > 0 {
+                    Text("+\(extra) more")
                         .font(.system(size: 10)).foregroundStyle(.secondary)
                 }
             }
@@ -178,7 +220,7 @@ struct ClipCardView: View {
             }
             return nil
         case .image:
-            if let data = item.imageData, let img = NSImage(data: data) {
+            if let data = item.imageData, let img = ClipImageCache.image(for: item.id, data: data) {
                 return "\(Int(img.size.width))×\(Int(img.size.height))"
             }
             return nil

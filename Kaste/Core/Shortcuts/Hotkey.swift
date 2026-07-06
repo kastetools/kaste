@@ -64,8 +64,11 @@ final class Hotkey {
             GetEventParameter(event, EventParamName(kEventParamDirectObject),
                               EventParamType(typeEventHotKeyID), nil,
                               MemoryLayout<EventHotKeyID>.size, nil, &hkID)
+            let id = hkID.id
             DispatchQueue.main.async {
-                Hotkey.actions[hkID.id]?()
+                // `actions` is only mutated from the main thread; reading it
+                // here (after the async hop) is safe.
+                Hotkey.actions[id]?()
             }
             return noErr
         }, 1, &spec, nil, nil)

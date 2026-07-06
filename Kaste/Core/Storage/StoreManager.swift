@@ -32,6 +32,31 @@ enum StoreManager {
         return dir
     }
 
+    // MARK: - Recovery
+
+    /// Nuclear option: move the current live store and every backup aside,
+    /// then create a fresh empty container. Called from the AppContainer
+    /// error UI as a last resort.
+    static func resetAndMakeContainer() throws -> ModelContainer {
+        let stamp = timestamp()
+        // Move backups/ so we don't accidentally overwrite user's history if
+        // they later realize what happened.
+        let parkedBackups = storeDirectory.appending(path: "backups.reset-\(stamp)", directoryHint: .isDirectory)
+        try? FileManager.default.moveItem(at: backupRoot, to: parkedBackups)
+        for ext in liveExtensions {
+            let live = storeDirectory.appending(path: storeFilename + ext)
+            if FileManager.default.fileExists(atPath: live.path) {
+                let parked = storeDirectory.appending(path: "\(storeFilename)\(ext).reset-\(stamp)")
+                try? FileManager.default.moveItem(at: live, to: parked)
+            }
+        }
+        NSLog("Kaste: reset — old store parked with suffix .reset-\(stamp)")
+        return try ModelContainer(
+            for: ClipItem.self,
+            configurations: ModelConfiguration(url: storeURL)
+        )
+    }
+
     // MARK: - Container lifecycle
 
     /// Open the store. On failure, swap in the newest viable backup and retry.
@@ -241,11 +266,15 @@ enum StoreManager {
         }
     }
 
-    private static func timestamp() -> String {
+    private static let timestampFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM-dd-HH-mm-ss"
         f.locale = Locale(identifier: "en_US_POSIX")
         f.timeZone = .current
-        return f.string(from: Date())
+        return f
+    }()
+
+    private static func timestamp() -> String {
+        timestampFormatter.string(from: Date())
     }
 }

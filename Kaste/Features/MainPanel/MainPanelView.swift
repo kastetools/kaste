@@ -318,6 +318,7 @@ private struct ClipItemListView: View {
                             index: idx,
                             isSelected: idx == selection
                         )
+                        .equatable()
                         .id(item.id)
                         .onTapGesture(count: 2) { selection = idx; commit(visible) }
                         .simultaneousGesture(

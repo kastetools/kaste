@@ -49,28 +49,60 @@ enum ItemActions {
         (item.filePaths ?? []).compactMap { URL(fileURLWithPath: $0) }
     }
 
-    private static let tempDir: URL = {
+    static let tempDir: URL = {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("Kaste-Previews", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        } catch {
+            NSLog("Kaste: preview tempDir create failed: \(error)")
+        }
         return dir
     }()
+
+    /// Called from AppDelegate at launch. Delete cached PNGs older than 7d
+    /// so the folder doesn't grow unbounded.
+    static func pruneOldTempFiles() {
+        let fm = FileManager.default
+        guard let entries = try? fm.contentsOfDirectory(
+            at: tempDir,
+            includingPropertiesForKeys: [.contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        ) else { return }
+        let cutoff = Date().addingTimeInterval(-7 * 86400)
+        for url in entries {
+            let mtime = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+            if mtime < cutoff {
+                do { try fm.removeItem(at: url) }
+                catch { NSLog("Kaste: temp prune failed for \(url.lastPathComponent): \(error)") }
+            }
+        }
+    }
 
     private static func ensureImageTempFile(for item: ClipItem) -> URL? {
         guard let data = item.imageData else { return nil }
         let url = tempDir.appendingPathComponent("\(item.id.uuidString).png")
         if !FileManager.default.fileExists(atPath: url.path) {
-            try? data.write(to: url)
+            do { try data.write(to: url) }
+            catch { NSLog("Kaste: preview tempfile write failed: \(error)") }
         }
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 
     private static func quickLook(urls: [URL]) {
+        guard !urls.isEmpty else { return }
         let p = Process()
         p.launchPath = "/usr/bin/qlmanage"
         p.arguments = ["-p"] + urls.map { $0.path }
         p.standardOutput = Pipe()
         p.standardError = Pipe()
-        do { try p.run() } catch { NSWorkspace.shared.open(urls.first!) }
+        do {
+            try p.run()
+        } catch {
+            NSLog("Kaste: qlmanage failed (\(error)); falling back to open")
+            if let first = urls.first {
+                NSWorkspace.shared.open(first)
+            }
+        }
     }
 }

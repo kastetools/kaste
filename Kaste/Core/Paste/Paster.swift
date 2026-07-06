@@ -53,6 +53,9 @@ enum Paster {
     private static func showAccessibilityAlert() {
         guard !alertShown else { return }
         alertShown = true
+        // Defer to next runloop so we don't `runModal` synchronously inside a
+        // hotkey handler or animation completion. Blocking there would stall
+        // the panel hide animation and eat subsequent hotkey events.
         DispatchQueue.main.async {
             let alert = NSAlert()
             alert.messageText = "Kaste needs Accessibility access"
@@ -73,8 +76,9 @@ enum Paster {
             alertShown = false
             switch resp {
             case .alertFirstButtonReturn:
-                NSWorkspace.shared.open(URL(string:
-                    "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
+                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+                    NSWorkspace.shared.open(url)
+                }
             case .alertSecondButtonReturn:
                 NSApp.terminate(nil)
             default: break
@@ -97,11 +101,23 @@ enum Paster {
 
     /// Strip formatting from whatever is currently on the pasteboard and
     /// synthesize ⌘V into the frontmost app. No panel is shown; this is the
-    /// global "plain paste" hotkey behaviour.
+    /// global "plain paste" hotkey behaviour. Restores the original
+    /// pasteboard contents ~350ms after the paste completes so subsequent
+    /// ⌘V invocations still see the user's original formatted content.
     static func plainPasteCurrent() {
         let autoPaste = (UserDefaults.standard.object(forKey: "autoPasteEnabled") as? Bool) ?? true
         let pb = NSPasteboard.general
         guard let text = pb.string(forType: .string), !text.isEmpty else { return }
+
+        // Snapshot every type on every pasteboard item so we can restore
+        // fidelity after the plain-paste completes.
+        let snapshot: [[String: Data]] = (pb.pasteboardItems ?? []).map { item in
+            var dict: [String: Data] = [:]
+            for type in item.types {
+                if let data = item.data(forType: type) { dict[type.rawValue] = data }
+            }
+            return dict
+        }
 
         pb.clearContents()
         pb.setString(text, forType: .string)
@@ -117,6 +133,30 @@ enum Paster {
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
             sendCommandV()
+            // Give the target app 350ms to consume the plain-text paste, then
+            // put the original clipboard contents back so subsequent ⌘V in
+            // other apps still gets the formatted version.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                restorePasteboard(snapshot)
+            }
         }
+    }
+
+    private static func restorePasteboard(_ snapshot: [[String: Data]]) {
+        guard !snapshot.isEmpty else { return }
+        let pb = NSPasteboard.general
+        let items: [NSPasteboardItem] = snapshot.map { dict in
+            let pi = NSPasteboardItem()
+            for (raw, value) in dict {
+                pi.setData(value, forType: NSPasteboard.PasteboardType(raw))
+            }
+            return pi
+        }
+        pb.clearContents()
+        // Tag the restore too so ClipboardMonitor ignores it.
+        if let first = items.first {
+            first.setData(Data(), forType: NSPasteboard.PasteboardType("app.kaste.internal"))
+        }
+        pb.writeObjects(items)
     }
 }

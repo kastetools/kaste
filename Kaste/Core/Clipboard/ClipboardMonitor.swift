@@ -18,8 +18,11 @@ final class ClipboardMonitor {
 
     func start() {
         stop()
+        // Timer fires on the current run loop (main). We're already @MainActor,
+        // so hop straight into tick() — no extra Task hop that could reorder
+        // ticks under load.
         timer = Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.tick() }
+            MainActor.assumeIsolated { self?.tick() }
         }
         RunLoop.main.add(timer!, forMode: .common)
     }
@@ -133,7 +136,16 @@ final class ClipboardMonitor {
         do {
             try context.save()
         } catch {
-            NSLog("Kaste: ClipboardMonitor insert save failed: \(error)")
+            // Save failed — the context is now holding a dirty insert. Roll
+            // back so we don't compound the problem on the next tick, and
+            // snapshot the store on the way out so the user can at least
+            // recover from the last-known-good state.
+            NSLog("Kaste: ClipboardMonitor insert save failed: \(error) — rolling back")
+            context.rollback()
+            Task.detached(priority: .utility) {
+                StoreManager.snapshotNow()
+            }
+            return
         }
         Task { @MainActor in
             self.deduplicate(hash: hash)
@@ -180,9 +192,13 @@ final class ClipboardMonitor {
 
     func backfillSearchKey() {
         let d = FetchDescriptor<ClipItem>(predicate: #Predicate { $0.searchKey == nil && $0.plainText != nil })
-        guard let pending = try? context.fetch(d), !pending.isEmpty else { return }
+        let pending: [ClipItem]
+        do { pending = try context.fetch(d) }
+        catch { NSLog("Kaste: backfillSearchKey fetch failed: \(error)"); return }
+        guard !pending.isEmpty else { return }
         for item in pending { item.searchKey = item.plainText?.lowercased() }
-        try? context.save()
+        do { try context.save() }
+        catch { NSLog("Kaste: backfillSearchKey save failed: \(error)"); context.rollback() }
     }
 
     func enforceRetention() {
@@ -192,23 +208,39 @@ final class ClipboardMonitor {
         let expired = FetchDescriptor<ClipItem>(
             predicate: #Predicate { !$0.isPinned && $0.lastUsedAt < cutoff }
         )
-        guard let victims = try? context.fetch(expired), !victims.isEmpty else { return }
-        for item in victims { context.delete(item) }
-        try? context.save()
+        let victims: [ClipItem]
+        do { victims = try context.fetch(expired) }
+        catch { NSLog("Kaste: enforceRetention fetch failed: \(error)"); return }
+        guard !victims.isEmpty else { return }
+        for item in victims {
+            ClipImageCache.drop(item.id)
+            context.delete(item)
+        }
+        do { try context.save() }
+        catch { NSLog("Kaste: enforceRetention save failed: \(error)"); context.rollback() }
     }
 
     func enforceCapacity() {
         let maxItems = UserDefaults.standard.object(forKey: "maxItems") as? Int ?? 1000
         let nonPinned = FetchDescriptor<ClipItem>(predicate: #Predicate { !$0.isPinned })
-        guard let total = try? context.fetchCount(nonPinned), total > maxItems else { return }
+        let total: Int
+        do { total = try context.fetchCount(nonPinned) }
+        catch { NSLog("Kaste: enforceCapacity count failed: \(error)"); return }
+        guard total > maxItems else { return }
         var oldest = FetchDescriptor<ClipItem>(
             predicate: #Predicate { !$0.isPinned },
             sortBy: [SortDescriptor(\.lastUsedAt, order: .forward)]
         )
         oldest.fetchLimit = total - maxItems
-        guard let victims = try? context.fetch(oldest) else { return }
-        for item in victims { context.delete(item) }
-        try? context.save()
+        let victims: [ClipItem]
+        do { victims = try context.fetch(oldest) }
+        catch { NSLog("Kaste: enforceCapacity fetch failed: \(error)"); return }
+        for item in victims {
+            ClipImageCache.drop(item.id)
+            context.delete(item)
+        }
+        do { try context.save() }
+        catch { NSLog("Kaste: enforceCapacity save failed: \(error)"); context.rollback() }
     }
 
     private func serialize() -> Data? {

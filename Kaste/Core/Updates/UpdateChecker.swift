@@ -53,6 +53,7 @@ enum UpdateChecker {
         var req = URLRequest(url: url)
         req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         req.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        req.timeoutInterval = 15
 
         let (data, response) = try await URLSession.shared.data(for: req)
         guard let http = response as? HTTPURLResponse else { throw UpdateError.malformedResponse }
@@ -80,13 +81,21 @@ enum UpdateChecker {
     static func downloadAndInstall(_ release: ReleaseInfo) async throws {
         guard let dmgURL = release.dmgURL else { throw UpdateError.noDMGAsset }
 
-        let (tempLocal, _) = try await URLSession.shared.download(from: dmgURL)
+        var req = URLRequest(url: dmgURL)
+        req.timeoutInterval = 120 // DMG can be big; 2 minutes is generous
+        let (tempLocal, _) = try await URLSession.shared.download(for: req)
         let dest = FileManager.default.temporaryDirectory
             .appendingPathComponent("Kaste-\(release.version).dmg")
         try? FileManager.default.removeItem(at: dest)
         try FileManager.default.moveItem(at: tempLocal, to: dest)
 
-        await MainActor.run { _ = try? Self.runInstaller(dmgPath: dest.path) }
+        await MainActor.run {
+            do {
+                try Self.runInstaller(dmgPath: dest.path)
+            } catch {
+                NSLog("Kaste: runInstaller failed: \(error)")
+            }
+        }
     }
 
     @MainActor
@@ -95,11 +104,16 @@ enum UpdateChecker {
         let scriptURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("kaste-installer-\(pid).sh")
 
+        // Install over the currently-running bundle location — /Applications
+        // isn't always writable (managed Macs, non-admin users). Users who
+        // dropped Kaste in ~/Applications get updated in place.
+        let currentBundle = Bundle.main.bundleURL.path
+
         let script = #"""
         #!/bin/bash
         PID="__PID__"
         DMG="__DMG__"
-        DEST="/Applications/Kaste.app"
+        DEST="__DEST__"
         LOG="/tmp/kaste-installer.log"
 
         exec >>"$LOG" 2>&1
@@ -120,7 +134,21 @@ enum UpdateChecker {
           exit 1
         fi
 
-        /usr/bin/ditto "$VOLUME/Kaste.app" "$DEST" || { echo "ditto failed"; /usr/bin/hdiutil detach "$VOLUME" -quiet; exit 1; }
+        if ! /usr/bin/ditto "$VOLUME/Kaste.app" "$DEST"; then
+          echo "ditto failed — $DEST likely not writable"
+          /usr/bin/hdiutil detach "$VOLUME" -quiet
+          MARKER="$HOME/Desktop/Kaste-update-FAILED.txt"
+          {
+            echo "Kaste automatic update failed."
+            echo ""
+            echo "Reason: could not write to $DEST"
+            echo "Downloaded DMG kept at: $DMG"
+            echo ""
+            echo "Fix: open the DMG and drag Kaste.app to a writable Applications folder."
+          } > "$MARKER"
+          /usr/bin/open -R "$DMG"
+          exit 1
+        fi
         /usr/bin/xattr -dr com.apple.quarantine "$DEST" 2>/dev/null || true
 
         /usr/bin/hdiutil detach "$VOLUME" -quiet || true
@@ -131,6 +159,7 @@ enum UpdateChecker {
         """#
         .replacingOccurrences(of: "__PID__", with: "\(pid)")
         .replacingOccurrences(of: "__DMG__", with: dmgPath)
+        .replacingOccurrences(of: "__DEST__", with: currentBundle)
 
         try script.write(to: scriptURL, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755],

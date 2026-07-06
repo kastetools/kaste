@@ -66,6 +66,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hb.tolerance = 1
         RunLoop.main.add(hb, forMode: .common)
         heartbeatTimer = hb
+
+        // Wipe stale Quick Look / drag cache files (>7d) so the temp folder
+        // doesn't grow unbounded across sessions.
+        Task.detached(priority: .utility) {
+            ItemActions.pruneOldTempFiles()
+        }
+    }
+
+    /// Silences macOS 14+ warning "supportsSecureRestorableState not set".
+    /// We have no restorable state — return true so AppKit stops nagging.
+    func applicationSupportsSecureRestorableState(_ application: NSApplication) -> Bool {
+        true
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -91,7 +103,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .filter { $0.processIdentifier != current.processIdentifier }
         guard let existing = others.first else { return true }
 
-        existing.activate(options: [.activateIgnoringOtherApps])
+        existing.activate()
         NSApp.terminate(nil)
         return false
     }
