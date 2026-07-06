@@ -21,10 +21,19 @@ struct ClipCardView: View {
     private var appIcon: NSImage? { AppColorExtractor.appIcon(forBundleID: item.sourceBundleID) }
 
     var body: some View {
-        VStack(spacing: 0) {
-            banner
-            bodyArea
-            footer
+        Group {
+            // Guard against SwiftData asserting when we read a property of a
+            // ClipItem that was just deleted (dedup / retention / capacity
+            // cleanup) but @Query hasn't republished the array yet.
+            if item.modelContext == nil {
+                Color.clear
+            } else {
+                VStack(spacing: 0) {
+                    banner
+                    bodyArea
+                    footer
+                }
+            }
         }
         .frame(width: 224, height: 224)
         .background(Color(nsColor: NSColor.windowBackgroundColor).opacity(isSelected ? 1.0 : 0.92))

@@ -9,6 +9,7 @@ final class ClipboardMonitor {
     private var lastChangeCount: Int
     private var timer: Timer?
     private let pollInterval: TimeInterval = 0.3
+    private var cleanupPending = false
 
     init(context: ModelContext) {
         self.context = context
@@ -136,6 +137,20 @@ final class ClipboardMonitor {
         }
         Task { @MainActor in
             self.deduplicate(hash: hash)
+            self.scheduleCleanup()
+        }
+    }
+
+    /// Coalesce enforceRetention + enforceCapacity into at most one run every
+    /// 5 seconds. Repeated captures no longer trigger back-to-back deletions
+    /// that could delete a ClipItem while ClipCardView is mid-read of its
+    /// properties.
+    private func scheduleCleanup() {
+        guard !cleanupPending else { return }
+        cleanupPending = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+            guard let self else { return }
+            self.cleanupPending = false
             self.enforceRetention()
             self.enforceCapacity()
         }
