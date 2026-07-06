@@ -27,6 +27,7 @@ final class PanelController: NSObject {
     }
 
     func toggle(plainText: Bool) {
+        NSLog("Kaste: toggle plainText=\(plainText) state=\(state)")
         switch state {
         case .hidden, .hiding:
             show(plainText: plainText)
@@ -53,13 +54,15 @@ final class PanelController: NSObject {
             panel.setFrame(start, display: false)
             panel.alphaValue = 0
         }
-        // Deliberately DO NOT call `NSApp.activate(ignoringOtherApps: true)`.
-        // We're an accessory app with a nonactivating panel — activating the
-        // whole app forcibly demotes whatever window was frontmost, which
-        // shows up as a window-switch flicker under custom shortcuts like
-        // ⌘⌥V. makeKeyAndOrderFront alone is enough to give the panel key
-        // status without disturbing the user's app focus.
         panel.makeKeyAndOrderFront(nil)
+        // macOS 14+ no-argument `activate()` is gentle — it doesn't ignore
+        // other apps or force-demote windows the way the old
+        // `activate(ignoringOtherApps: true)` did, but it DOES bring the
+        // accessory app's window to the foreground so the panel is actually
+        // visible (makeKeyAndOrderFront alone isn't sufficient on 15+ for a
+        // nonactivating accessory).
+        NSApp.activate()
+        NSLog("Kaste: panel ordered front, isVisible=\(panel.isVisible) isKey=\(panel.isKeyWindow)")
 
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = showDuration

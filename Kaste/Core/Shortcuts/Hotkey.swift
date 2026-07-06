@@ -29,11 +29,13 @@ final class Hotkey {
         let hotKeyID = EventHotKeyID(signature: OSType(0x4B535445 /* "KSTE" */), id: id)
         var ref: EventHotKeyRef?
         let status = RegisterEventHotKey(keyCode, modifiers.rawValue, hotKeyID,
-                                         GetApplicationEventTarget(), 0, &ref)
+                                         GetEventDispatcherTarget(), 0, &ref)
         if status == noErr, let ref {
             self.ref = ref
+            NSLog("Kaste: hotkey registered id=\(id) keyCode=\(keyCode) mods=0x\(String(modifiers.rawValue, radix: 16))")
         } else {
             Hotkey.actions[id] = nil
+            NSLog("Kaste: hotkey REGISTER FAILED status=\(status) keyCode=\(keyCode) mods=0x\(String(modifiers.rawValue, radix: 16))")
         }
     }
 
@@ -58,7 +60,7 @@ final class Hotkey {
         handlerInstalled = true
         var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard),
                                  eventKind: UInt32(kEventHotKeyPressed))
-        InstallEventHandler(GetApplicationEventTarget(), { _, event, _ -> OSStatus in
+        InstallEventHandler(GetEventDispatcherTarget(), { _, event, _ -> OSStatus in
             guard let event else { return OSStatus(eventNotHandledErr) }
             var hkID = EventHotKeyID()
             GetEventParameter(event, EventParamName(kEventParamDirectObject),
@@ -68,7 +70,11 @@ final class Hotkey {
             DispatchQueue.main.async {
                 // `actions` is only mutated from the main thread; reading it
                 // here (after the async hop) is safe.
-                Hotkey.actions[id]?()
+                if let action = Hotkey.actions[id] {
+                    action()
+                } else {
+                    NSLog("Kaste: hotkey fired but no action for id=\(id)")
+                }
             }
             return noErr
         }, 1, &spec, nil, nil)
