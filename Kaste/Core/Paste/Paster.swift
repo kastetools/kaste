@@ -131,15 +131,40 @@ enum Paster {
             showAccessibilityAlert()
             return
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+        // If we inject ⌘V while the user is still physically holding ⇧ (or
+        // ⌥/⌃), the OS merges our injected event with the held modifiers
+        // and the target app receives ⇧⌘V instead of ⌘V — which in most
+        // apps is either their own plain-paste (works accidentally) or
+        // completely different (Find/Replace, no-op, …). Wait until every
+        // non-cmd modifier is released, then send.
+        waitForNonCommandModifiersReleased(hardDeadline: 0.8) {
             sendCommandV()
-            // Give the target app 350ms to consume the plain-text paste, then
-            // put the original clipboard contents back so subsequent ⌘V in
-            // other apps still gets the formatted version.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
                 restorePasteboard(snapshot)
             }
         }
+    }
+
+    /// Polls `NSEvent.modifierFlags` at 20ms intervals until ⇧, ⌥ and ⌃ are
+    /// all released, or until `hardDeadline` seconds have elapsed. `cmd` is
+    /// intentionally ignored because our injected ⌘V wants ⌘ set anyway.
+    private static func waitForNonCommandModifiersReleased(
+        hardDeadline: TimeInterval,
+        then completion: @escaping () -> Void
+    ) {
+        let deadline = Date().addingTimeInterval(hardDeadline)
+        func poll() {
+            let mods = NSEvent.modifierFlags
+            let heldNonCmd = mods.contains(.shift)
+                || mods.contains(.control)
+                || mods.contains(.option)
+            if !heldNonCmd || Date() >= deadline {
+                completion()
+            } else {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { poll() }
+            }
+        }
+        DispatchQueue.main.async { poll() }
     }
 
     private static func restorePasteboard(_ snapshot: [[String: Data]]) {
