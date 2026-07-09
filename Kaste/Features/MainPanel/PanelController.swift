@@ -19,11 +19,26 @@ final class PanelController: NSObject {
 
     private enum State { case hidden, showing, visible, hiding }
     private var state: State = .hidden
+    /// Timestamp of the last user interaction. Not currently used to gate
+    /// behaviour (the always-ordered-in strategy in warmUp+animateOut keeps
+    /// the backing store hot regardless of idle time) but kept for logging /
+    /// future diagnostics.
+    private var lastActivityAt: Date = .distantPast
 
-    /// Build the panel + SwiftUI hierarchy eagerly so the first ⇧⌘V is instant.
-    /// Called once at app launch from AppDelegate.
+    /// Build the panel + SwiftUI hierarchy eagerly so the first ⇧⌘V is
+    /// instant. Also parks the panel off-screen with alpha 0 while ordered
+    /// in — macOS won't release its backing store while a window is in the
+    /// display list, so subsequent shows are always warm regardless of how
+    /// long the app has been idle. Called once at app launch.
     func warmUp() {
-        _ = ensurePanel()
+        let panel = ensurePanel()
+        let target = bottomFrame()
+        var offscreen = target
+        offscreen.origin.y -= target.height + 20
+        panel.setFrame(offscreen, display: false)
+        panel.alphaValue = 0
+        panel.orderFront(nil)
+        panel.displayIfNeeded()
     }
 
     func toggle(plainText: Bool) {
@@ -40,28 +55,29 @@ final class PanelController: NSObject {
         previousApp = NSWorkspace.shared.frontmostApplication
         let panel = ensurePanel()
 
+        lastActivityAt = Date()
         session.plainTextMode = plainText
         session.resetTick &+= 1
-
         state = .showing
 
         let target = bottomFrame()
-        // If we were mid-hide, keep current y and slide back up from wherever it is.
-        // Otherwise start from the off-screen position.
+        // Panel is always ordered in (warmUp parked it off-screen at alpha 0
+        // and animateOut never orderOut's), so we don't need to reset the
+        // starting frame on the common path — the animator interpolates
+        // smoothly from wherever it currently sits (which is either the
+        // off-screen park or a partially-hidden mid-animation position).
+        // Emergency fallback: if somehow the panel got orderOut'd elsewhere,
+        // re-anchor at the off-screen position before ordering back in.
         if !panel.isVisible {
             var start = target
             start.origin.y -= target.height + 20
             panel.setFrame(start, display: false)
             panel.alphaValue = 0
+            panel.level = .statusBar
         }
         panel.makeKeyAndOrderFront(nil)
-        // macOS 14+ no-argument `activate()` is gentle — it doesn't ignore
-        // other apps or force-demote windows the way the old
-        // `activate(ignoringOtherApps: true)` did, but it DOES bring the
-        // accessory app's window to the foreground so the panel is actually
-        // visible (makeKeyAndOrderFront alone isn't sufficient on 15+ for a
-        // nonactivating accessory).
         NSApp.activate()
+        panel.displayIfNeeded()
         NSLog("Kaste: panel ordered front, isVisible=\(panel.isVisible) isKey=\(panel.isKeyWindow)")
 
         NSAnimationContext.runAnimationGroup({ ctx in
@@ -76,6 +92,7 @@ final class PanelController: NSObject {
     }
 
     func hide() {
+        lastActivityAt = Date()
         animateOut { [weak self] in
             self?.previousApp?.activate()
         }
@@ -111,10 +128,11 @@ final class PanelController: NSObject {
             panel.animator().alphaValue = 0
         }, completionHandler: { [weak self] in
             // If a re-show happened mid-animation, state was flipped to .showing;
-            // don't yank the panel out from under it.
+            // don't yank the panel out from under it. We intentionally do NOT
+            // call panel.orderOut here — keeping the window in the display
+            // list is what stops macOS from releasing its backing store while
+            // Kaste sits idle, so the next hotkey press is always warm.
             if self?.state == .hiding {
-                panel.orderOut(nil)
-                panel.alphaValue = 1
                 self?.state = .hidden
             }
             completion()
