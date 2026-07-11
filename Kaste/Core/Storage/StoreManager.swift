@@ -10,7 +10,11 @@ import SQLite3
 enum StoreManager {
     private static let storeFilename = "default.store"
     private static let liveExtensions = ["", "-wal", "-shm"]
-    private static let backupsToKeep = 8
+    // Keep only the two most recent snapshots. A hot-copy sqlite backup for a
+    // clipboard store can easily be 50–150 MB with images; the previous
+    // 8-snapshot policy meant this folder grew to over 1 GB on machines that
+    // had been running Kaste for months.
+    private static let backupsToKeep = 2
     static let backupInterval: TimeInterval = 30 * 60 // 30 min
 
     static var storeDirectory: URL {
@@ -63,6 +67,11 @@ enum StoreManager {
     /// On success, take an immediate snapshot capturing the just-recovered
     /// state.
     static func makeContainer() throws -> ModelContainer {
+        // Enforce the current backup retention policy at every launch so
+        // machines carrying an inflated history from an older policy
+        // (previously we kept 8 snapshots) recover disk space on next open.
+        pruneOldBackups()
+
         // Pre-1.1.17 builds used SwiftData's implicit default location at
         // ~/Library/Application Support/default.store (no bundleID subfolder).
         // 1.1.17 introduced an explicit URL inside the bundleID subfolder.

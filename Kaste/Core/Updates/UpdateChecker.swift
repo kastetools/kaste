@@ -14,6 +14,7 @@ enum UpdateChecker {
 
     enum UpdateError: LocalizedError {
         case badStatus(Int)
+        case rateLimited(resetAt: Date?)
         case malformedResponse
         case noDMGAsset
         case mountFailed
@@ -22,12 +23,56 @@ enum UpdateChecker {
         var errorDescription: String? {
             switch self {
             case .badStatus(let c):     return "GitHub responded with HTTP \(c)"
+            case .rateLimited(let at):
+                if let at {
+                    let mins = max(1, Int(ceil(at.timeIntervalSinceNow / 60)))
+                    return "GitHub API rate limit reached. Try again in ~\(mins) min."
+                }
+                return "GitHub API rate limit reached. Try again shortly."
             case .malformedResponse:    return "Unexpected response from GitHub"
             case .noDMGAsset:           return "The latest release has no DMG asset"
             case .mountFailed:          return "Could not mount the downloaded DMG"
             case .copyFailed(let m):    return "Install script failed: \(m)"
             }
         }
+    }
+
+    // Small on-disk cache: last ETag + last decoded release JSON blob. GitHub
+    // guarantees that conditional requests (`If-None-Match: <etag>`) which
+    // return 304 Not Modified do NOT count against the 60/hour anonymous
+    // rate limit, so this lets us check-for-updates freely once we've seen
+    // one full response.
+    private static let etagKey = "updateChecker.etag"
+    private static let cachedReleaseKey = "updateChecker.cachedRelease"
+
+    private static func loadCachedRelease() -> ReleaseInfo? {
+        guard let data = UserDefaults.standard.data(forKey: cachedReleaseKey),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        return parseRelease(from: json)
+    }
+
+    private static func saveCachedRelease(rawJSON: Data, etag: String?) {
+        UserDefaults.standard.set(rawJSON, forKey: cachedReleaseKey)
+        if let etag { UserDefaults.standard.set(etag, forKey: etagKey) }
+    }
+
+    private static func parseRelease(from json: [String: Any]) -> ReleaseInfo? {
+        guard let tagName = json["tag_name"] as? String,
+              let htmlURLString = json["html_url"] as? String,
+              let htmlURL = URL(string: htmlURLString) else {
+            return nil
+        }
+        let version = tagName.hasPrefix("v") ? String(tagName.dropFirst()) : tagName
+        let assets = json["assets"] as? [[String: Any]] ?? []
+        let dmgURL = assets.compactMap { asset -> URL? in
+            guard let name = asset["name"] as? String, name.hasSuffix(".dmg"),
+                  let urlStr = asset["browser_download_url"] as? String else { return nil }
+            return URL(string: urlStr)
+        }.first
+        return ReleaseInfo(tagName: tagName, version: version,
+                           htmlURL: htmlURL, dmgURL: dmgURL)
     }
 
     static func currentVersion() -> String {
@@ -54,25 +99,39 @@ enum UpdateChecker {
         req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         req.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
         req.timeoutInterval = 15
+        // Conditional request: 304 Not Modified doesn't count against
+        // GitHub's 60/hour anonymous rate limit.
+        if let etag = UserDefaults.standard.string(forKey: etagKey) {
+            req.setValue(etag, forHTTPHeaderField: "If-None-Match")
+        }
 
         let (data, response) = try await URLSession.shared.data(for: req)
         guard let http = response as? HTTPURLResponse else { throw UpdateError.malformedResponse }
+
+        if http.statusCode == 304, let cached = loadCachedRelease() {
+            return cached
+        }
+
+        if http.statusCode == 403 || http.statusCode == 429 {
+            // Try to salvage a helpful message via cached response, else surface a clear rate-limit error.
+            let resetAt = (http.value(forHTTPHeaderField: "x-ratelimit-reset")).flatMap(TimeInterval.init)
+                .map { Date(timeIntervalSince1970: $0) }
+            if let cached = loadCachedRelease() {
+                NSLog("Kaste: update check rate-limited (HTTP \(http.statusCode)); returning cached release")
+                return cached
+            }
+            throw UpdateError.rateLimited(resetAt: resetAt)
+        }
+
         guard http.statusCode == 200 else { throw UpdateError.badStatus(http.statusCode) }
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let tagName = json["tag_name"] as? String,
-              let htmlURLString = json["html_url"] as? String,
-              let htmlURL = URL(string: htmlURLString) else {
+              let release = parseRelease(from: json) else {
             throw UpdateError.malformedResponse
         }
-        let version = tagName.hasPrefix("v") ? String(tagName.dropFirst()) : tagName
-        let assets = json["assets"] as? [[String: Any]] ?? []
-        let dmgURL = assets.compactMap { asset -> URL? in
-            guard let name = asset["name"] as? String, name.hasSuffix(".dmg"),
-                  let urlStr = asset["browser_download_url"] as? String else { return nil }
-            return URL(string: urlStr)
-        }.first
-        return ReleaseInfo(tagName: tagName, version: version,
-                           htmlURL: htmlURL, dmgURL: dmgURL)
+        saveCachedRelease(rawJSON: data,
+                          etag: http.value(forHTTPHeaderField: "Etag")
+                                ?? http.value(forHTTPHeaderField: "ETag"))
+        return release
     }
 
     /// Downloads the DMG asset, then hands off to a detached shell script that
