@@ -218,6 +218,7 @@ private struct ClipItemListView: View {
     @Binding var visibleCount: Int
 
     @State private var selection: Int = 0
+    @State private var dropHoverID: UUID? = nil
 
     private static let fetchLimit = 500
 
@@ -319,6 +320,19 @@ private struct ClipItemListView: View {
                             isSelected: idx == selection
                         )
                         .equatable()
+                        .overlay {
+                            if dropHoverID == item.id {
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .fill(Color.accentColor.opacity(0.18))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                            .strokeBorder(Color.accentColor, lineWidth: 3)
+                                    )
+                                    .allowsHitTesting(false)
+                                    .transition(.opacity)
+                            }
+                        }
+                        .animation(.easeOut(duration: 0.1), value: dropHoverID == item.id)
                         .id(item.id)
                         .onTapGesture(count: 2) { selection = idx; commit(visible) }
                         .simultaneousGesture(
@@ -348,10 +362,23 @@ private struct ClipItemListView: View {
                         .onDrag {
                             ItemActions.makeDragProvider(for: item) ?? NSItemProvider()
                         }
-                        .onDrop(of: [ItemActions.internalUUIDType], isTargeted: nil) { providers in
-                            handleReorderDrop(providers: providers,
-                                              droppedOn: item,
-                                              visible: visible)
+                        .onDrop(
+                            of: [ItemActions.internalUUIDType],
+                            isTargeted: Binding(
+                                get: { dropHoverID == item.id },
+                                set: { targeted in
+                                    if targeted {
+                                        dropHoverID = item.id
+                                    } else if dropHoverID == item.id {
+                                        dropHoverID = nil
+                                    }
+                                }
+                            )
+                        ) { providers in
+                            dropHoverID = nil
+                            return handleReorderDrop(providers: providers,
+                                                     droppedOn: item,
+                                                     visible: visible)
                         }
                     }
                 }
