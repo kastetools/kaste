@@ -1,5 +1,6 @@
 import AppKit
 import CryptoKit
+import ImageIO
 import SwiftData
 
 @MainActor
@@ -336,11 +337,16 @@ final class ClipboardMonitor {
     }
 
     /// Scans arbitrary text for the first `data:image/*;base64,…` payload
-    /// (surrounded by `"`, `'`, `)`, whitespace, or end-of-string) and
-    /// returns a PNG-encoded copy. Loose enough to cover HTML `<img src>`,
-    /// CSS `background:url(...)`, WebArchive resources, and plain text.
+    /// and returns a PNG-encoded copy. Loose enough to cover HTML `<img src>`,
+    /// CSS `background:url(...)`, WebArchive resources, and plain text. Uses
+    /// CGImageSource for decoding so PNG / JPEG / GIF / WebP / HEIC all work
+    /// without going through NSImage's TIFF round-trip (which was silently
+    /// dropping the biggest screenshots).
     static func extractDataURIImagePNG(from text: String) -> Data? {
-        let pattern = #"data:image/([a-zA-Z0-9+.\-]+);base64,([A-Za-z0-9+/=\s]+?)(?=[\"'\)\s<>]|$)"#
+        // `[\s\S]*?` lets us cross newlines that HTML pretty-printers inject
+        // into long base64 payloads. The lookahead stops at HTML/attribute
+        // terminators or end-of-string.
+        let pattern = #"data:image/([a-zA-Z0-9+.\-]+);base64,([\s\S]*?)(?=[\"'\)<>]|$)"#
         guard let regex = try? NSRegularExpression(pattern: pattern,
                                                    options: [.caseInsensitive, .dotMatchesLineSeparators]) else {
             NSLog("Kaste: data-URI regex compile failed")
@@ -355,28 +361,43 @@ final class ClipboardMonitor {
             return nil
         }
         let mime = String(text[mimeRange]).lowercased()
-        // Strip whitespace injected by HTML wrapping / pretty printing before decode.
-        let base64 = String(text[base64Range])
-            .components(separatedBy: .whitespacesAndNewlines)
-            .joined()
+        let base64 = String(text[base64Range]).filter { !$0.isWhitespace }
         guard let raw = Data(base64Encoded: base64, options: [.ignoreUnknownCharacters]) else {
             NSLog("Kaste: base64 decode failed (payload \(base64.count) chars, mime=\(mime))")
             return nil
         }
-        if mime.contains("png") {
-            // Already PNG; skip the tiff round-trip and just verify NSImage can load it.
-            if NSImage(data: raw) != nil { return raw }
-        }
-        guard let img = NSImage(data: raw) else {
-            NSLog("Kaste: NSImage(data:) failed after base64 decode (raw \(raw.count) bytes, mime=\(mime))")
+        return normalizeToPNG(raw, hintMime: mime)
+    }
+
+    /// Decode via CGImageSource (accepts far more formats and huge images
+    /// that NSImage stumbles on) and re-encode as PNG via CGImageDestination.
+    /// If the source is already PNG and CGImageSource likes it, we shortcut.
+    private static func normalizeToPNG(_ data: Data, hintMime: String) -> Data? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
+            NSLog("Kaste: CGImageSourceCreateWithData failed (raw \(data.count) bytes, mime=\(hintMime))")
             return nil
         }
-        guard let tiff = img.tiffRepresentation,
-              let rep = NSBitmapImageRep(data: tiff),
-              let png = rep.representation(using: .png, properties: [:]) else {
-            NSLog("Kaste: PNG re-encode failed (mime=\(mime))")
+        let sourceType = (CGImageSourceGetType(source) as String?) ?? "unknown"
+        if hintMime.contains("png") || sourceType.contains("png") {
+            // Already PNG: return raw bytes if a full image loads cleanly.
+            if CGImageSourceCreateImageAtIndex(source, 0, nil) != nil {
+                return data
+            }
+        }
+        guard let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+            NSLog("Kaste: CGImageSourceCreateImageAtIndex failed (mime=\(hintMime), sourceType=\(sourceType))")
             return nil
         }
-        return png
+        let out = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(out, "public.png" as CFString, 1, nil) else {
+            NSLog("Kaste: CGImageDestinationCreateWithData failed (mime=\(hintMime))")
+            return nil
+        }
+        CGImageDestinationAddImage(dest, cgImage, nil)
+        guard CGImageDestinationFinalize(dest) else {
+            NSLog("Kaste: CGImageDestinationFinalize failed (mime=\(hintMime))")
+            return nil
+        }
+        return out as Data
     }
 }
