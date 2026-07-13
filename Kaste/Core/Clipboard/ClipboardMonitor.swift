@@ -80,12 +80,10 @@ final class ClipboardMonitor {
             return
         }
 
-        // HTML with an embedded base64 data-URI image
-        // (Chrome extensions like FireShot / capture tools often only put
-        // this representation on the pasteboard — no direct .png/.tiff.)
-        if let htmlData = pasteboard.data(forType: .html),
-           let html = String(data: htmlData, encoding: .utf8),
-           let png = Self.extractDataURIImagePNG(from: html) {
+        // HTML (or WebArchive) with an embedded base64 data-URI image.
+        // Chrome extensions like FireShot / GoFullPage often only put this
+        // representation on the pasteboard — no direct .png/.tiff.
+        if let png = extractImagePNGFromRichPasteboard() {
             let h = sha256(png)
             upsert(kind: .image, hash: h, archive: archive, frontApp: frontApp) {
                 ClipItem(kind: .image, hash: h, plainText: nil, imageData: png,
@@ -297,27 +295,86 @@ final class ClipboardMonitor {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
-    /// Scans an HTML string for the first `<img src="data:image/*;base64,...">`
-    /// and returns a PNG-encoded copy. Fires when Chrome extensions like
-    /// FireShot copy a screenshot only as HTML with an inline data URI.
-    static func extractDataURIImagePNG(from html: String) -> Data? {
-        // Non-greedy match for the base64 payload of the first inline image.
-        let pattern = #"<img[^>]+src=[\"'](data:image/([a-zA-Z]+);base64,([^\"']+))[\"']"#
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive, .dotMatchesLineSeparators]),
-              let match = regex.firstMatch(in: html, options: [], range: NSRange(html.startIndex..., in: html)),
-              match.numberOfRanges >= 4,
-              let base64Range = Range(match.range(at: 3), in: html) else {
+    /// Multi-strategy extraction of an image from HTML / WebArchive / RTF /
+    /// URL-list representations. Chrome extensions typically write one of
+    /// these instead of a raw image type. Everything is normalized to PNG.
+    private func extractImagePNGFromRichPasteboard() -> Data? {
+        let sources: [(String, () -> String?)] = [
+            (".html",     { self.pasteboard.data(forType: .html).flatMap { self.decodeText($0) } }),
+            ("webarchive", { self.webarchiveText() }),
+            ("uri-list",  { self.pasteboard.string(forType: NSPasteboard.PasteboardType("public.utf8-plain-text")) }),
+            (".string",   { self.pasteboard.string(forType: .string) })
+        ]
+        for (label, fetch) in sources {
+            guard let text = fetch(), !text.isEmpty else { continue }
+            if let png = Self.extractDataURIImagePNG(from: text) {
+                NSLog("Kaste: extracted embedded image via \(label) (\(png.count) bytes)")
+                return png
+            }
+        }
+        return nil
+    }
+
+    /// Try several encodings — Chrome sometimes writes UTF-16 for HTML.
+    private func decodeText(_ data: Data) -> String? {
+        for enc in [String.Encoding.utf8, .utf16, .utf16LittleEndian, .utf16BigEndian, .isoLatin1] {
+            if let s = String(data: data, encoding: enc), !s.isEmpty { return s }
+        }
+        return nil
+    }
+
+    /// Deserialize a `com.apple.webarchive` blob and pull its dominant HTML
+    /// resource (the main frame's content) for data-URI scanning.
+    private func webarchiveText() -> String? {
+        guard let data = pasteboard.data(forType: NSPasteboard.PasteboardType("com.apple.webarchive")),
+              let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any],
+              let mainResource = plist["WebMainResource"] as? [String: Any],
+              let bodyData = mainResource["WebResourceData"] as? Data else {
             return nil
         }
-        let base64 = String(html[base64Range])
-        guard let raw = Data(base64Encoded: base64, options: [.ignoreUnknownCharacters]) else { return nil }
-        // Normalize to PNG regardless of source format (jpeg / gif / svg → png)
-        // so ClipCardView's NSImage(data:) decode + our downstream code all
-        // work uniformly. svg won't yield an NSBitmapImageRep — bail out.
-        guard let img = NSImage(data: raw),
-              let tiff = img.tiffRepresentation,
+        return decodeText(bodyData)
+    }
+
+    /// Scans arbitrary text for the first `data:image/*;base64,…` payload
+    /// (surrounded by `"`, `'`, `)`, whitespace, or end-of-string) and
+    /// returns a PNG-encoded copy. Loose enough to cover HTML `<img src>`,
+    /// CSS `background:url(...)`, WebArchive resources, and plain text.
+    static func extractDataURIImagePNG(from text: String) -> Data? {
+        let pattern = #"data:image/([a-zA-Z0-9+.\-]+);base64,([A-Za-z0-9+/=\s]+?)(?=[\"'\)\s<>]|$)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern,
+                                                   options: [.caseInsensitive, .dotMatchesLineSeparators]) else {
+            NSLog("Kaste: data-URI regex compile failed")
+            return nil
+        }
+        let range = NSRange(text.startIndex..., in: text)
+        guard let match = regex.firstMatch(in: text, options: [], range: range),
+              match.numberOfRanges >= 3,
+              let mimeRange = Range(match.range(at: 1), in: text),
+              let base64Range = Range(match.range(at: 2), in: text) else {
+            NSLog("Kaste: no data:image/*;base64 pattern found (text \(text.count) chars)")
+            return nil
+        }
+        let mime = String(text[mimeRange]).lowercased()
+        // Strip whitespace injected by HTML wrapping / pretty printing before decode.
+        let base64 = String(text[base64Range])
+            .components(separatedBy: .whitespacesAndNewlines)
+            .joined()
+        guard let raw = Data(base64Encoded: base64, options: [.ignoreUnknownCharacters]) else {
+            NSLog("Kaste: base64 decode failed (payload \(base64.count) chars, mime=\(mime))")
+            return nil
+        }
+        if mime.contains("png") {
+            // Already PNG; skip the tiff round-trip and just verify NSImage can load it.
+            if NSImage(data: raw) != nil { return raw }
+        }
+        guard let img = NSImage(data: raw) else {
+            NSLog("Kaste: NSImage(data:) failed after base64 decode (raw \(raw.count) bytes, mime=\(mime))")
+            return nil
+        }
+        guard let tiff = img.tiffRepresentation,
               let rep = NSBitmapImageRep(data: tiff),
               let png = rep.representation(using: .png, properties: [:]) else {
+            NSLog("Kaste: PNG re-encode failed (mime=\(mime))")
             return nil
         }
         return png
