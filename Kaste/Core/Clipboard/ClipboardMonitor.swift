@@ -201,6 +201,22 @@ final class ClipboardMonitor {
         catch { NSLog("Kaste: backfillSearchKey save failed: \(error)"); context.rollback() }
     }
 
+    /// Seed `sortRank` for rows that predate the drag-to-reorder feature.
+    /// Uses `lastUsedAt` so the initial visible order after upgrade matches
+    /// what the user was seeing before.
+    func backfillSortRank() {
+        let d = FetchDescriptor<ClipItem>(predicate: #Predicate { $0.sortRank == 0 })
+        let pending: [ClipItem]
+        do { pending = try context.fetch(d) }
+        catch { NSLog("Kaste: backfillSortRank fetch failed: \(error)"); return }
+        guard !pending.isEmpty else { return }
+        for item in pending {
+            item.sortRank = item.lastUsedAt.timeIntervalSince1970
+        }
+        do { try context.save() }
+        catch { NSLog("Kaste: backfillSortRank save failed: \(error)"); context.rollback() }
+    }
+
     func enforceRetention() {
         let days = UserDefaults.standard.object(forKey: "retentionDays") as? Int ?? 30
         guard days > 0 else { return }

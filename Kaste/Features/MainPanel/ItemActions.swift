@@ -3,19 +3,48 @@ import UniformTypeIdentifiers
 
 enum ItemActions {
 
+    /// Custom UTI used exclusively for intra-panel drag-reorder. External
+    /// apps ignore this identifier, so a card dragged to Finder still
+    /// resolves via the file-URL representation below without triggering
+    /// our own reorder drop.
+    static let internalUUIDType = "app.kaste.internal.clipitem-uuid"
+
     // MARK: - Drag
 
     static func makeDragProvider(for item: ClipItem) -> NSItemProvider? {
+        let provider = NSItemProvider()
+        var registeredAny = false
+
+        // External representation — file/image types can be dragged into
+        // Finder, Mail, etc. as an actual file.
         switch item.kind {
         case .file:
-            guard let url = fileURLs(for: item).first else { return nil }
-            return NSItemProvider(object: url as NSURL)
+            if let url = fileURLs(for: item).first {
+                provider.registerObject(url as NSURL, visibility: .all)
+                registeredAny = true
+            }
         case .image:
-            guard let url = ensureImageTempFile(for: item) else { return nil }
-            return NSItemProvider(object: url as NSURL)
+            if let url = ensureImageTempFile(for: item) {
+                provider.registerObject(url as NSURL, visibility: .all)
+                registeredAny = true
+            }
         default:
+            break
+        }
+
+        // Internal representation — always present so drag-to-reorder works
+        // for every kind, including text/url/color that have no file.
+        let uuidData = item.id.uuidString.data(using: .utf8) ?? Data()
+        provider.registerDataRepresentation(
+            forTypeIdentifier: internalUUIDType,
+            visibility: .ownProcess
+        ) { completion in
+            completion(uuidData, nil)
             return nil
         }
+        registeredAny = true
+
+        return registeredAny ? provider : nil
     }
 
     // MARK: - Quick Look

@@ -29,7 +29,7 @@ enum ClipKind: String, Codable, CaseIterable {
 
 @Model
 final class ClipItem {
-    #Index<ClipItem>([\.lastUsedAt], [\.isPinned], [\.kindRaw], [\.contentHash])
+    #Index<ClipItem>([\.lastUsedAt], [\.isPinned], [\.kindRaw], [\.contentHash], [\.sortRank])
 
     @Attribute(.unique) var id: UUID
     var createdAt: Date
@@ -38,6 +38,12 @@ final class ClipItem {
     var isPinned: Bool
     var kindRaw: String
     var contentHash: String
+    /// Display order (DESC — larger = further left / on top). Defaults to
+    /// the insert timestamp so new items surface first, but the user can
+    /// drag cards to any position and we recompute this rank to sit
+    /// between their new neighbours. `lastUsedAt` keeps its retention
+    /// semantics; sortRank is purely visual order.
+    var sortRank: Double
 
     var plainText: String?
     var searchKey: String?
@@ -64,8 +70,10 @@ final class ClipItem {
         sourceAppName: String? = nil
     ) {
         self.id = UUID()
-        self.createdAt = Date()
-        self.lastUsedAt = Date()
+        let now = Date()
+        self.createdAt = now
+        self.lastUsedAt = now
+        self.sortRank = now.timeIntervalSince1970
         self.useCount = 0
         self.isPinned = false
         self.kindRaw = kind.rawValue

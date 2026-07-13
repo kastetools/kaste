@@ -11,10 +11,10 @@ struct MainPanelView: View {
 
     // Lightweight queries used only for tab/footer counts. SwiftData materializes
     // these as faults; the heavy blobs (.externalStorage) are not loaded.
-    @Query(sort: \ClipItem.lastUsedAt, order: .reverse)
+    @Query(sort: \ClipItem.sortRank, order: .reverse)
     private var allItems: [ClipItem]
     @Query(filter: #Predicate<ClipItem> { $0.isPinned },
-           sort: \ClipItem.lastUsedAt, order: .reverse)
+           sort: \ClipItem.sortRank, order: .reverse)
     private var pinnedItems: [ClipItem]
 
     @State private var search = ""
@@ -245,7 +245,7 @@ private struct ClipItemListView: View {
         }
         var descriptor = FetchDescriptor<ClipItem>(
             predicate: predicate,
-            sortBy: [SortDescriptor(\.lastUsedAt, order: .reverse)]
+            sortBy: [SortDescriptor(\.sortRank, order: .reverse)]
         )
         descriptor.fetchLimit = Self.fetchLimit
         _items = Query(descriptor)
@@ -348,6 +348,11 @@ private struct ClipItemListView: View {
                         .onDrag {
                             ItemActions.makeDragProvider(for: item) ?? NSItemProvider()
                         }
+                        .onDrop(of: [ItemActions.internalUUIDType], isTargeted: nil) { providers in
+                            handleReorderDrop(providers: providers,
+                                              droppedOn: item,
+                                              visible: visible)
+                        }
                     }
                 }
                 .padding(.horizontal, 16)
@@ -419,6 +424,84 @@ private struct ClipItemListView: View {
         guard visible.indices.contains(idx) else { return }
         selection = idx
         commit(visible)
+    }
+
+    // MARK: - Drag reorder
+
+    /// Fires when the user drops one card on top of another (both cards live
+    /// in the current panel). We move the dragged item so it sits at the
+    /// same index the drop-target card currently occupies — i.e. dragging
+    /// A onto B places A right where B was, pushing B one slot to the right.
+    private func handleReorderDrop(providers: [NSItemProvider],
+                                   droppedOn target: ClipItem,
+                                   visible: [ClipItem]) -> Bool {
+        guard let provider = providers.first(where: {
+            $0.hasItemConformingToTypeIdentifier(ItemActions.internalUUIDType)
+        }) else { return false }
+
+        provider.loadDataRepresentation(forTypeIdentifier: ItemActions.internalUUIDType) { data, _ in
+            guard let data,
+                  let text = String(data: data, encoding: .utf8),
+                  let sourceID = UUID(uuidString: text),
+                  sourceID != target.id else { return }
+            DispatchQueue.main.async {
+                reorder(sourceID: sourceID, targetID: target.id, visible: visible)
+            }
+        }
+        return true
+    }
+
+    private func reorder(sourceID: UUID, targetID: UUID, visible: [ClipItem]) {
+        guard let source = visible.first(where: { $0.id == sourceID }),
+              let targetIdx = visible.firstIndex(where: { $0.id == targetID }),
+              source.id != targetID else { return }
+
+        // Insert source so that it takes over target's slot; the target and
+        // everything to its right shift one position right. Compute a new
+        // sortRank sitting between target and target's left neighbour.
+        // Since we sort DESC by sortRank, "left" means "higher rank".
+        let target = visible[targetIdx]
+        let leftNeighbour = targetIdx == 0 ? nil : visible[targetIdx - 1]
+
+        let newRank: Double
+        if let left = leftNeighbour, left.id != source.id {
+            newRank = (left.sortRank + target.sortRank) / 2
+        } else {
+            // Target is the leftmost visible card — bump above it by 1s.
+            newRank = target.sortRank + 1
+        }
+
+        // Avoid rank collision if a previous reorder squashed neighbours.
+        if newRank == target.sortRank || (leftNeighbour.map { newRank == $0.sortRank } ?? false) {
+            renumberAllRanks(visible: visible, moving: source, before: target)
+        } else {
+            source.sortRank = newRank
+        }
+
+        do { try context.save() }
+        catch {
+            NSLog("Kaste: reorder save failed: \(error)")
+            context.rollback()
+        }
+    }
+
+    /// Fallback when float precision runs out between adjacent items —
+    /// rewrite the whole visible sequence with fresh integer-stepped ranks,
+    /// slotting the moved item into its intended position.
+    private func renumberAllRanks(visible: [ClipItem], moving source: ClipItem, before target: ClipItem) {
+        var order = visible.filter { $0.id != source.id }
+        if let dropIdx = order.firstIndex(where: { $0.id == target.id }) {
+            order.insert(source, at: dropIdx)
+        } else {
+            order.append(source)
+        }
+        // Assign large gaps so future midpoint reorders have precision.
+        let step: Double = 1024
+        var rank = Double(order.count) * step
+        for item in order {
+            item.sortRank = rank
+            rank -= step
+        }
     }
 }
 

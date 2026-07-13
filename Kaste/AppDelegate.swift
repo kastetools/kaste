@@ -30,6 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let context = AppContainer.shared.container.mainContext
         let monitor = ClipboardMonitor(context: context)
         monitor.backfillSearchKey()
+        monitor.backfillSortRank()
         monitor.enforceRetention()
         monitor.enforceCapacity()
         monitor.start()
