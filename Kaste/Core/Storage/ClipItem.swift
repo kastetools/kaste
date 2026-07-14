@@ -43,7 +43,14 @@ final class ClipItem {
     /// drag cards to any position and we recompute this rank to sit
     /// between their new neighbours. `lastUsedAt` keeps its retention
     /// semantics; sortRank is purely visual order.
-    var sortRank: Double
+    ///
+    /// The `= 0` default is load-bearing: without it, upgrading a store
+    /// created before this field existed hits a lightweight-migration
+    /// error ("missing attribute values on mandatory destination
+    /// attribute"), which crashes the app before any recovery UI can
+    /// show. `backfillSortRank` replaces the zeros with real values
+    /// derived from `lastUsedAt` on the next launch.
+    var sortRank: Double = 0
 
     var plainText: String?
     var searchKey: String?

@@ -218,6 +218,17 @@ private struct AboutTab: View {
                      destination: latest.htmlURL)
                     .font(.footnote)
             }
+
+            Divider().padding(.vertical, 4)
+
+            Button("Show log folder in Finder") {
+                KLog.revealInFinder()
+            }
+            .font(.footnote)
+            Text("Kaste writes its diagnostic log here — if you hit a bug, send us the newest `kaste.log`.")
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+                .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding()

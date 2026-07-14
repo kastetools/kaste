@@ -32,10 +32,10 @@ final class Hotkey {
                                          GetEventDispatcherTarget(), 0, &ref)
         if status == noErr, let ref {
             self.ref = ref
-            NSLog("Kaste: hotkey registered id=\(id) keyCode=\(keyCode) mods=0x\(String(modifiers.rawValue, radix: 16))")
+            KLog.log("hotkey registered id=\(id) keyCode=\(keyCode) mods=0x\(String(modifiers.rawValue, radix: 16))")
         } else {
             Hotkey.actions[id] = nil
-            NSLog("Kaste: hotkey REGISTER FAILED status=\(status) keyCode=\(keyCode) mods=0x\(String(modifiers.rawValue, radix: 16))")
+            KLog.log("hotkey REGISTER FAILED status=\(status) keyCode=\(keyCode) mods=0x\(String(modifiers.rawValue, radix: 16))")
         }
     }
 
@@ -71,9 +71,10 @@ final class Hotkey {
                 // `actions` is only mutated from the main thread; reading it
                 // here (after the async hop) is safe.
                 if let action = Hotkey.actions[id] {
+                    KLog.log("hotkey fired id=\(id) frontApp=\(NSWorkspace.shared.frontmostApplication?.localizedName ?? "nil")")
                     action()
                 } else {
-                    NSLog("Kaste: hotkey fired but no action for id=\(id)")
+                    KLog.log("hotkey fired but no action for id=\(id)")
                 }
             }
             return noErr

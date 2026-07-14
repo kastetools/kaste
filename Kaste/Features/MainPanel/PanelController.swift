@@ -39,10 +39,11 @@ final class PanelController: NSObject {
         panel.alphaValue = 0
         panel.orderFront(nil)
         panel.displayIfNeeded()
+        KLog.log("warmUp: panel at \(offscreen), isVisible=\(panel.isVisible)")
     }
 
     func toggle(plainText: Bool) {
-        NSLog("Kaste: toggle plainText=\(plainText) state=\(state)")
+        KLog.log("toggle plainText=\(plainText) state=\(state)")
         switch state {
         case .hidden, .hiding:
             show(plainText: plainText)
@@ -55,17 +56,20 @@ final class PanelController: NSObject {
         previousApp = NSWorkspace.shared.frontmostApplication
         let panel = ensurePanel()
 
+        let idleFor = Date().timeIntervalSince(lastActivityAt)
         lastActivityAt = Date()
         session.plainTextMode = plainText
         session.resetTick &+= 1
         state = .showing
 
         let target = bottomFrame()
-        // Panel is always ordered in (warmUp parked it off-screen at alpha 0
-        // and animateOut never orderOut's), so we don't need to reset the
-        // starting frame on the common path — the animator interpolates
-        // smoothly from wherever it currently sits (which is either the
-        // off-screen park or a partially-hidden mid-animation position).
+        let visibleBefore = panel.isVisible
+        let alphaBefore = panel.alphaValue
+        let keyBefore = panel.isKeyWindow
+        let previousAppName = previousApp?.localizedName ?? "nil"
+
+        KLog.log("show pre: idle=\(Int(idleFor))s prevApp=\(previousAppName) visible=\(visibleBefore) key=\(keyBefore) alpha=\(alphaBefore) frame=\(panel.frame) target=\(target)")
+
         // Emergency fallback: if somehow the panel got orderOut'd elsewhere,
         // re-anchor at the off-screen position before ordering back in.
         if !panel.isVisible {
@@ -75,10 +79,17 @@ final class PanelController: NSObject {
             panel.alphaValue = 0
             panel.level = .statusBar
         }
+
+        // Aggressive front-order sequence. Any single one of these can be a
+        // no-op on macOS 15+ under obscure conditions (App Nap partial wake,
+        // stale spaces state, another accessory app holding key). Doing all
+        // three costs nothing and covers every regression path we've hit.
         panel.makeKeyAndOrderFront(nil)
+        panel.orderFrontRegardless()
         NSApp.activate()
         panel.displayIfNeeded()
-        NSLog("Kaste: panel ordered front, isVisible=\(panel.isVisible) isKey=\(panel.isKeyWindow)")
+
+        KLog.log("show post: visible=\(panel.isVisible) key=\(panel.isKeyWindow) alpha=\(panel.alphaValue) frame=\(panel.frame) frontApp=\(NSWorkspace.shared.frontmostApplication?.localizedName ?? "nil")")
 
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = showDuration
@@ -88,6 +99,7 @@ final class PanelController: NSObject {
             panel.animator().alphaValue = 1
         }, completionHandler: { [weak self] in
             if self?.state == .showing { self?.state = .visible }
+            KLog.log("show done: visible=\(panel.isVisible) key=\(panel.isKeyWindow) alpha=\(panel.alphaValue) frame=\(panel.frame)")
         })
     }
 
