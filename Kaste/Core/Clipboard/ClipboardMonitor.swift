@@ -11,6 +11,13 @@ final class ClipboardMonitor {
     private var timer: Timer?
     private let pollInterval: TimeInterval = 0.3
     private var cleanupPending = false
+    /// Chrome/Arc's async Clipboard API bumps changeCount *before* the blob
+    /// finishes writing. Our first read after a bump can see `types == []`
+    /// while the actual data is still on the way. Set this to N when the
+    /// initial capture came up empty; tick() will re-run capture() N more
+    /// times before giving up. 4 × 300 ms = up to 1.2 s of retry.
+    private var pendingRetries: Int = 0
+    private static let maxRetriesForEmpty = 4
 
     init(context: ModelContext) {
         self.context = context
@@ -35,15 +42,31 @@ final class ClipboardMonitor {
 
     private func tick() {
         let cc = pasteboard.changeCount
-        guard cc != lastChangeCount else { return }
-        KLog.log("tick: changeCount \(lastChangeCount) → \(cc)")
-        lastChangeCount = cc
-        capture()
+        if cc != lastChangeCount {
+            KLog.log("tick: changeCount \(lastChangeCount) → \(cc)")
+            lastChangeCount = cc
+            pendingRetries = Self.maxRetriesForEmpty
+            capture()
+        } else if pendingRetries > 0 {
+            pendingRetries -= 1
+            KLog.log("tick: retrying capture for cc=\(cc), \(pendingRetries) attempts left")
+            capture()
+        }
     }
 
     private func capture() {
-        let types = pasteboard.types ?? []
-        KLog.log("capture: pasteboard types = \(types.map { $0.rawValue })")
+        var types = pasteboard.types ?? []
+        // Chrome/Arc lazy items sometimes don't show up in pasteboard.types
+        // but ARE present as individual item.types. Merge them in.
+        if let items = pasteboard.pasteboardItems {
+            for item in items {
+                for t in item.types where !types.contains(t) {
+                    types.append(t)
+                }
+            }
+        }
+        let itemCount = pasteboard.pasteboardItems?.count ?? 0
+        KLog.log("capture: pasteboard types = \(types.map { $0.rawValue }) itemCount=\(itemCount)")
         if types.contains(NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")) {
             KLog.log("capture: skipped (ConcealedType)")
             return
@@ -70,6 +93,7 @@ final class ClipboardMonitor {
         if let urls = pasteboard.readObjects(forClasses: [NSURL.self]) as? [URL], !urls.isEmpty,
            urls.allSatisfy({ $0.isFileURL }) {
             KLog.log("capture: matched file URLs (\(urls.count))")
+            pendingRetries = 0
             let paths = urls.map { $0.path }
             let h = sha256(paths.joined(separator: "\n"))
             upsert(kind: .file, hash: h, archive: archive, frontApp: frontApp) {
@@ -87,6 +111,7 @@ final class ClipboardMonitor {
            let rep = NSBitmapImageRep(data: tiff),
            let png = rep.representation(using: .png, properties: [:]) {
             KLog.log("capture: matched NSImage native (\(png.count) bytes)")
+            pendingRetries = 0
             let h = sha256(png)
             upsert(kind: .image, hash: h, archive: archive, frontApp: frontApp) {
                 ClipItem(kind: .image, hash: h, plainText: nil, imageData: png,
@@ -102,6 +127,7 @@ final class ClipboardMonitor {
         // representation on the pasteboard — no direct .png/.tiff.
         if let png = extractImagePNGFromRichPasteboard() {
             KLog.log("capture: matched HTML/rich data-URI image (\(png.count) bytes)")
+            pendingRetries = 0
             let h = sha256(png)
             upsert(kind: .image, hash: h, archive: archive, frontApp: frontApp) {
                 ClipItem(kind: .image, hash: h, plainText: nil, imageData: png,
@@ -141,6 +167,7 @@ final class ClipboardMonitor {
             }
 
             KLog.log("capture: matched plain text kind=\(kind) len=\(str.count)")
+            pendingRetries = 0
             upsert(kind: kind, hash: h, archive: archive, frontApp: frontApp) {
                 ClipItem(kind: kind, hash: h, plainText: str, colorHex: colorHex,
                          pasteboardArchive: archive,
