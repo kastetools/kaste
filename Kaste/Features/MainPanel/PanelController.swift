@@ -72,6 +72,12 @@ final class PanelController: NSObject {
         lastActivityAt = Date()
         session.plainTextMode = plainText
         session.resetTick &+= 1
+
+        // Snapshot BEFORE flipping state so we can tell whether we're
+        // starting cold (fully hidden — need to reset to off-screen so the
+        // slide-up animation actually plays) or reversing a mid-hide (keep
+        // current partial-alpha frame and let the animator smoothly reverse).
+        let coldStart = (state == .hidden)
         state = .showing
 
         let target = bottomFrame()
@@ -80,11 +86,14 @@ final class PanelController: NSObject {
         let keyBefore = panel.isKeyWindow
         let previousAppName = previousApp?.localizedName ?? "nil"
 
-        KLog.log("show pre: idle=\(Int(idleFor))s prevApp=\(previousAppName) visible=\(visibleBefore) key=\(keyBefore) alpha=\(alphaBefore) frame=\(panel.frame) target=\(target)")
+        KLog.log("show pre: cold=\(coldStart) idle=\(Int(idleFor))s prevApp=\(previousAppName) visible=\(visibleBefore) key=\(keyBefore) alpha=\(alphaBefore) frame=\(panel.frame) target=\(target)")
 
-        // Emergency fallback: if somehow the panel got orderOut'd elsewhere,
-        // re-anchor at the off-screen position before ordering back in.
-        if !panel.isVisible {
+        if coldStart {
+            // Anchor at the off-screen start position + alpha 0. This is
+            // needed both for the very first show and for shows after
+            // hidesOnDeactivate hid us (which leaves frame at `target` and
+            // alpha 1 — meaning without this reset the animator would run
+            // from target→target and produce no visible animation).
             var start = target
             start.origin.y -= target.height + 20
             panel.setFrame(start, display: false)
@@ -201,7 +210,10 @@ final class PanelController: NSObject {
         )
         panel.isFloatingPanel = true
         panel.level = .statusBar
-        panel.hidesOnDeactivate = true
+        // Deliberately false — we drive our own animated hide via the
+        // didResignKey observer below. AppKit's built-in flag-hide breaks
+        // the show/hide animation contract (see the observer comment).
+        panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         panel.backgroundColor = .clear
         panel.isOpaque = false
@@ -212,11 +224,15 @@ final class PanelController: NSObject {
         session.onPaste = { [weak self] item in self?.commit(item: item) }
         session.onClose = { [weak self] in self?.hide() }
 
-        // Sync state proactively when AppKit hides the panel via
-        // `hidesOnDeactivate` (user clicked into another app). Without this
-        // the state machine drifts to `.visible` after AppKit's invisible
-        // hide, and the next toggle mis-routes to hide() with focus-stealing
-        // side effects.
+        // When the user clicks into another app, run our own hide animation
+        // (slide down + fade out) instead of the AppKit-flag-hide, which
+        // would slam the panel invisible and leave `frame == target`,
+        // `alpha == 1` — a state that then produces no visible animation on
+        // the next show(). Turning hidesOnDeactivate off means AppKit
+        // doesn't touch the window; didResignKeyNotification lets us drive
+        // the animated hide ourselves via the same code path that ⏎/Esc
+        // use, so state, frame, and alpha all stay consistent.
+        panel.hidesOnDeactivate = false
         NotificationCenter.default.addObserver(
             forName: NSWindow.didResignKeyNotification,
             object: panel,
@@ -224,8 +240,8 @@ final class PanelController: NSObject {
         ) { [weak self] _ in
             guard let self else { return }
             if self.state == .visible || self.state == .showing {
-                KLog.log("panel resigned key while state=\(self.state); syncing to .hidden")
-                self.state = .hidden
+                KLog.log("panel resigned key while state=\(self.state); animating hide")
+                self.hide()
             }
         }
 
