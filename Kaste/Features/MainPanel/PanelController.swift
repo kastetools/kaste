@@ -43,6 +43,18 @@ final class PanelController: NSObject {
     }
 
     func toggle(plainText: Bool) {
+        // Resync state with reality before dispatching. `hidesOnDeactivate`
+        // can hide the panel behind our back when the user clicks into
+        // another app — the window is gone from the screen but our state
+        // is still `.visible`. Without this correction the next hotkey
+        // press dispatches to hide() with a stale state, `animateOut`
+        // early-returns, and its completion activates the *previous*
+        // frontmost app — yanking focus away for no reason and requiring
+        // a second press to actually open the panel.
+        if let panel, state == .visible && !panel.isVisible {
+            KLog.log("toggle: correcting stale state=.visible → .hidden (panel was hidden externally)")
+            state = .hidden
+        }
         KLog.log("toggle plainText=\(plainText) state=\(state)")
         switch state {
         case .hidden, .hiding:
@@ -105,8 +117,18 @@ final class PanelController: NSObject {
 
     func hide() {
         lastActivityAt = Date()
+        // Snapshot whether we actually had a visible panel to hide. If not,
+        // this whole call is a no-op — do NOT re-activate previousApp, which
+        // would steal focus from whatever the user is currently in and give
+        // it to some stale record of what was frontmost during our last
+        // real show().
+        let wasVisible = panel?.isVisible ?? false
         animateOut { [weak self] in
-            self?.previousApp?.activate()
+            if wasVisible {
+                self?.previousApp?.activate()
+            } else {
+                KLog.log("hide: skipping previousApp.activate (panel wasn't visible)")
+            }
         }
     }
 
@@ -189,6 +211,23 @@ final class PanelController: NSObject {
         // Wire session callbacks once; the hosting view is then reused across all show/hide.
         session.onPaste = { [weak self] item in self?.commit(item: item) }
         session.onClose = { [weak self] in self?.hide() }
+
+        // Sync state proactively when AppKit hides the panel via
+        // `hidesOnDeactivate` (user clicked into another app). Without this
+        // the state machine drifts to `.visible` after AppKit's invisible
+        // hide, and the next toggle mis-routes to hide() with focus-stealing
+        // side effects.
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.didResignKeyNotification,
+            object: panel,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            if self.state == .visible || self.state == .showing {
+                KLog.log("panel resigned key while state=\(self.state); syncing to .hidden")
+                self.state = .hidden
+            }
+        }
 
         let root = AnyView(
             MainPanelView()
