@@ -240,22 +240,20 @@ final class PanelController: NSObject {
         session.onClose = { [weak self] in self?.hide() }
 
         // When the user clicks into another app, run our own hide animation
-        // (slide down + fade out) instead of the AppKit-flag-hide, which
-        // would slam the panel invisible and leave `frame == target`,
-        // `alpha == 1` — a state that then produces no visible animation on
-        // the next show(). Turning hidesOnDeactivate off means AppKit
-        // doesn't touch the window; didResignKeyNotification lets us drive
-        // the animated hide ourselves via the same code path that ⏎/Esc
-        // use, so state, frame, and alpha all stay consistent.
+        // instead of AppKit's silent flag-hide. We listen on the *app*
+        // resign-active event, NOT `NSWindow.didResignKeyNotification` —
+        // the latter also fires when the user opens Kaste's own Settings
+        // window (which takes key from the panel while the app stays
+        // active), and we do not want to hide the panel in that case.
         panel.hidesOnDeactivate = false
         NotificationCenter.default.addObserver(
-            forName: NSWindow.didResignKeyNotification,
-            object: panel,
+            forName: NSApplication.didResignActiveNotification,
+            object: nil,
             queue: .main
         ) { [weak self] _ in
             guard let self else { return }
             if self.state == .visible || self.state == .showing {
-                KLog.log("panel resigned key while state=\(self.state); animating hide")
+                KLog.log("app resigned active while state=\(self.state); animating panel hide")
                 self.hide()
             }
         }
