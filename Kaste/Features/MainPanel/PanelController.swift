@@ -110,6 +110,16 @@ final class PanelController: NSObject {
         NSApp.activate()
         panel.displayIfNeeded()
 
+        // Route the initial keyboard focus to the KeyView, not the search
+        // field. Even after we cleared the search text on hide, the field
+        // editor from the previous session can still be first responder
+        // when the hosting view is reused across shows — which then eats
+        // ⌘1-9 and ← → until the user manually clicks away.
+        SearchFieldFocus.isActive = false
+        if let kv = KeyHandler.KeyView.activeView {
+            panel.makeFirstResponder(kv)
+        }
+
         KLog.log("show post: visible=\(panel.isVisible) key=\(panel.isKeyWindow) alpha=\(panel.alphaValue) frame=\(panel.frame) frontApp=\(NSWorkspace.shared.frontmostApplication?.localizedName ?? "nil")")
 
         NSAnimationContext.runAnimationGroup({ ctx in
@@ -154,6 +164,11 @@ final class PanelController: NSObject {
 
     private func animateOut(_ completion: @escaping () -> Void) {
         session.previewItem = nil
+        // Clear transient UI state so it doesn't linger into the next show:
+        // stale search text, filter selection, tab, and any search-field
+        // focus. resetTick fires an onChange listener in MainPanelView that
+        // wipes @State back to defaults.
+        session.resetTick &+= 1
         guard let panel, panel.isVisible else {
             state = .hidden
             completion()
