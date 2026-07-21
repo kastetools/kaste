@@ -34,18 +34,38 @@ enum ItemActions {
 
         // Internal representation — always present so drag-to-reorder works
         // for every kind, including text/url/color that have no file.
-        let uuidData = item.id.uuidString.data(using: .utf8) ?? Data()
+        // We advertise the UUID under BOTH our custom UTI and public.text.
+        // SwiftUI's `.onDrop(of:)` matches against declared UTIs at accept
+        // time; on some macOS versions it silently ignores a custom UTI that
+        // isn't listed in the app's UTImportedTypeDeclarations. public.text
+        // is guaranteed to be accepted, so the drop handler always fires
+        // and can inspect the payload to decide if it's ours.
+        let uuidString = item.id.uuidString
+        let payload = "\(internalPayloadPrefix)\(uuidString)"
+        let payloadData = payload.data(using: .utf8) ?? Data()
         provider.registerDataRepresentation(
             forTypeIdentifier: internalUUIDType,
+            visibility: .all
+        ) { completion in
+            completion(payloadData, nil)
+            return nil
+        }
+        provider.registerDataRepresentation(
+            forTypeIdentifier: "public.utf8-plain-text",
             visibility: .ownProcess
         ) { completion in
-            completion(uuidData, nil)
+            completion(payloadData, nil)
             return nil
         }
         registeredAny = true
 
         return registeredAny ? provider : nil
     }
+
+    /// Every dragged card includes a UUID payload prefixed with this
+    /// literal, so the drop handler can distinguish a Kaste-internal
+    /// reorder from an unrelated text drop.
+    static let internalPayloadPrefix = "kaste://item/"
 
     // MARK: - Reveal in Finder
 

@@ -363,7 +363,8 @@ private struct ClipItemListView: View {
                             ItemActions.makeDragProvider(for: item) ?? NSItemProvider()
                         }
                         .onDrop(
-                            of: [ItemActions.internalUUIDType],
+                            of: [ItemActions.internalUUIDType,
+                                 "public.utf8-plain-text"],
                             isTargeted: Binding(
                                 get: { dropHoverID == item.id },
                                 set: { targeted in
@@ -493,22 +494,52 @@ private struct ClipItemListView: View {
     private func handleReorderDrop(providers: [NSItemProvider],
                                    droppedOn target: ClipItem,
                                    visible: [ClipItem]) -> Bool {
-        guard let provider = providers.first(where: {
-            $0.hasItemConformingToTypeIdentifier(ItemActions.internalUUIDType)
-        }) else { return false }
+        KLog.log("drop: providers=\(providers.count) target=\(target.id)")
+        // Try each provider in priority order — our custom UTI first, then
+        // public.utf8-plain-text as a fallback for macOS versions that don't
+        // route custom UTIs through SwiftUI's drop pipeline unless declared
+        // in UTImportedTypeDeclarations.
+        for provider in providers {
+            let types = provider.registeredTypeIdentifiers
+            KLog.log("drop: provider types = \(types)")
+            let ourType = types.first(where: { $0 == ItemActions.internalUUIDType })
+                ?? types.first(where: { $0 == "public.utf8-plain-text" })
+            guard let typeIdentifier = ourType else { continue }
 
-        provider.loadDataRepresentation(forTypeIdentifier: ItemActions.internalUUIDType) { data, _ in
-            guard let data,
-                  let text = String(data: data, encoding: .utf8),
-                  let sourceID = UUID(uuidString: text),
-                  sourceID != target.id else { return }
-            DispatchQueue.main.async {
-                withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
-                    reorder(sourceID: sourceID, targetID: target.id, visible: visible)
+            provider.loadDataRepresentation(forTypeIdentifier: typeIdentifier) { data, error in
+                if let error {
+                    KLog.log("drop: loadDataRepresentation error: \(error)")
+                    return
+                }
+                guard let data,
+                      let text = String(data: data, encoding: .utf8) else {
+                    KLog.log("drop: empty/non-utf8 payload")
+                    return
+                }
+                // Only act on payloads that carry our own prefix. This
+                // filters out unrelated text drops that happen to hit a
+                // card (e.g. dragging highlighted text from another app).
+                guard text.hasPrefix(ItemActions.internalPayloadPrefix) else {
+                    KLog.log("drop: payload not ours (\(text.prefix(40)))")
+                    return
+                }
+                let uuidString = String(text.dropFirst(ItemActions.internalPayloadPrefix.count))
+                guard let sourceID = UUID(uuidString: uuidString),
+                      sourceID != target.id else {
+                    KLog.log("drop: bad UUID or same as target")
+                    return
+                }
+                DispatchQueue.main.async {
+                    KLog.log("drop: reorder \(sourceID) → position of \(target.id)")
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+                        reorder(sourceID: sourceID, targetID: target.id, visible: visible)
+                    }
                 }
             }
+            return true
         }
-        return true
+        KLog.log("drop: no matching provider")
+        return false
     }
 
     private func reorder(sourceID: UUID, targetID: UUID, visible: [ClipItem]) {
