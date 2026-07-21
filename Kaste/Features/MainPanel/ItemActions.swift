@@ -47,29 +47,23 @@ enum ItemActions {
         return registeredAny ? provider : nil
     }
 
-    // MARK: - Quick Look
+    // MARK: - Reveal in Finder
 
-    static func preview(_ item: ClipItem) {
+    static func revealInFinder(_ item: ClipItem) {
         switch item.kind {
         case .file:
             let urls = fileURLs(for: item)
             guard !urls.isEmpty else { return }
-            // Use qlmanage for a proper QL window without depending on QLPreviewPanel state.
-            quickLook(urls: urls)
+            NSWorkspace.shared.activateFileViewerSelecting(urls)
         case .image:
-            guard let url = ensureImageTempFile(for: item) else { return }
-            quickLook(urls: [url])
+            // Materialize the cached PNG so the user can grab it from Finder.
+            if let url = ensureImageTempFile(for: item) {
+                NSWorkspace.shared.activateFileViewerSelecting([url])
+            }
         default:
-            break
+            // Nothing to reveal for text / rtf / url / color.
+            NSSound.beep()
         }
-    }
-
-    // MARK: - Reveal in Finder
-
-    static func revealInFinder(_ item: ClipItem) {
-        let urls = fileURLs(for: item)
-        guard !urls.isEmpty else { return }
-        NSWorkspace.shared.activateFileViewerSelecting(urls)
     }
 
     // MARK: - Helpers
@@ -118,20 +112,4 @@ enum ItemActions {
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 
-    private static func quickLook(urls: [URL]) {
-        guard !urls.isEmpty else { return }
-        let p = Process()
-        p.launchPath = "/usr/bin/qlmanage"
-        p.arguments = ["-p"] + urls.map { $0.path }
-        p.standardOutput = Pipe()
-        p.standardError = Pipe()
-        do {
-            try p.run()
-        } catch {
-            NSLog("Kaste: qlmanage failed (\(error)); falling back to open")
-            if let first = urls.first {
-                NSWorkspace.shared.open(first)
-            }
-        }
-    }
 }

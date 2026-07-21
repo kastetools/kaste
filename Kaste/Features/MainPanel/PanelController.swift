@@ -163,7 +163,6 @@ final class PanelController: NSObject {
     }
 
     private func animateOut(_ completion: @escaping () -> Void) {
-        session.previewItem = nil
         // Clear transient UI state so it doesn't linger into the next show:
         // stale search text, filter selection, tab, and any search-field
         // focus. resetTick fires an onChange listener in MainPanelView that

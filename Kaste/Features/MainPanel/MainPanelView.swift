@@ -59,16 +59,10 @@ struct MainPanelView: View {
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay {
-            if let item = session.previewItem {
-                PreviewOverlayView(item: item) { session.previewItem = nil }
-            }
-        }
         .onChange(of: session.resetTick) { _, _ in
             search = ""
             filter = nil
             tab = .all
-            session.previewItem = nil
         }
         .onAppear {
             session.onSwitchTab = { forward in
@@ -181,7 +175,8 @@ struct MainPanelView: View {
         HStack(spacing: 16) {
             footerKey("←/→", "Navigate")
             footerKey("⏎", plainTextMode ? "Paste plain" : "Paste")
-            footerKey("Space", "Preview")
+            footerKey("Space", "Quick Look")
+            footerKey("⌘⏎", "Reveal in Finder")
             footerKey("⌘P", "Pin")
             footerKey("⌫", "Delete")
             footerKey("esc", "Close")
@@ -280,17 +275,15 @@ private struct ClipItemListView: View {
                     onPrevTab: { session.onSwitchTab(false) },
                     onNextTab: { session.onSwitchTab(true) },
                     onEnter: { commit(visible) },
-                    onCommandEnter: { quickLook(visible) },
+                    onCommandEnter: { revealInFinder(visible) },
                     onEsc: {
-                        if session.previewItem != nil {
-                            session.previewItem = nil
-                        } else if selection > 0 {
+                        if selection > 0 {
                             selection = 0
                         } else {
                             onClose()
                         }
                     },
-                    onSpace: { togglePreview(visible) },
+                    onSpace: { quickLook(visible) },
                     onPin: { togglePin(visible) },
                     onDelete: { deleteAt(visible) },
                     onDigit: { jumpTo($0, visible) },
@@ -426,12 +419,9 @@ private struct ClipItemListView: View {
         QuickLookPreviewController.shared.preview(visible[selection])
     }
 
-    private func togglePreview(_ visible: [ClipItem]) {
-        if session.previewItem != nil {
-            session.previewItem = nil
-        } else if visible.indices.contains(selection) {
-            session.previewItem = visible[selection]
-        }
+    private func revealInFinder(_ visible: [ClipItem]) {
+        guard visible.indices.contains(selection) else { return }
+        ItemActions.revealInFinder(visible[selection])
     }
 
     private func togglePin(_ visible: [ClipItem]) {

@@ -148,11 +148,14 @@ private struct ShortcutsTab: View {
             }
 
             Section("Fixed (in-panel)") {
-                LabeledContent("Navigate cards",  value: "← →")
-                LabeledContent("Paste selected",  value: "⏎")
-                LabeledContent("Pin / Unpin",     value: "⌘P")
-                LabeledContent("Delete",          value: "⌫")
-                LabeledContent("Close",           value: "Esc")
+                LabeledContent("Navigate cards",   value: "← →")
+                LabeledContent("Switch tab",       value: "⌘← ⌘→")
+                LabeledContent("Paste selected",   value: "⏎")
+                LabeledContent("Quick Look",       value: "Space")
+                LabeledContent("Reveal in Finder", value: "⌘⏎")
+                LabeledContent("Pin / Unpin",      value: "⌘P")
+                LabeledContent("Delete",           value: "⌫")
+                LabeledContent("Close",            value: "Esc")
             }
 
             Section {
