@@ -3,69 +3,24 @@ import UniformTypeIdentifiers
 
 enum ItemActions {
 
-    /// Custom UTI used exclusively for intra-panel drag-reorder. External
-    /// apps ignore this identifier, so a card dragged to Finder still
-    /// resolves via the file-URL representation below without triggering
-    /// our own reorder drop.
-    static let internalUUIDType = "app.kaste.internal.clipitem-uuid"
-
     // MARK: - Drag
 
-    static func makeDragProvider(for item: ClipItem) -> NSItemProvider? {
-        let provider = NSItemProvider()
-        var registeredAny = false
-
-        // External representation — file/image types can be dragged into
-        // Finder, Mail, etc. as an actual file.
+    /// Provider for dragging a card OUT of Kaste — into Finder, Mail,
+    /// Slack, etc. Only file and image kinds have anything meaningful to
+    /// hand off; text/URL/color cards return nil so `.onDrag` yields an
+    /// empty provider and the drag simply doesn't take.
+    static func makeExternalDragProvider(for item: ClipItem) -> NSItemProvider? {
         switch item.kind {
         case .file:
-            if let url = fileURLs(for: item).first {
-                provider.registerObject(url as NSURL, visibility: .all)
-                registeredAny = true
-            }
+            guard let url = fileURLs(for: item).first else { return nil }
+            return NSItemProvider(object: url as NSURL)
         case .image:
-            if let url = ensureImageTempFile(for: item) {
-                provider.registerObject(url as NSURL, visibility: .all)
-                registeredAny = true
-            }
+            guard let url = ensureImageTempFile(for: item) else { return nil }
+            return NSItemProvider(object: url as NSURL)
         default:
-            break
-        }
-
-        // Internal representation — always present so drag-to-reorder works
-        // for every kind, including text/url/color that have no file.
-        // We advertise the UUID under BOTH our custom UTI and public.text.
-        // SwiftUI's `.onDrop(of:)` matches against declared UTIs at accept
-        // time; on some macOS versions it silently ignores a custom UTI that
-        // isn't listed in the app's UTImportedTypeDeclarations. public.text
-        // is guaranteed to be accepted, so the drop handler always fires
-        // and can inspect the payload to decide if it's ours.
-        let uuidString = item.id.uuidString
-        let payload = "\(internalPayloadPrefix)\(uuidString)"
-        let payloadData = payload.data(using: .utf8) ?? Data()
-        provider.registerDataRepresentation(
-            forTypeIdentifier: internalUUIDType,
-            visibility: .all
-        ) { completion in
-            completion(payloadData, nil)
             return nil
         }
-        provider.registerDataRepresentation(
-            forTypeIdentifier: "public.utf8-plain-text",
-            visibility: .ownProcess
-        ) { completion in
-            completion(payloadData, nil)
-            return nil
-        }
-        registeredAny = true
-
-        return registeredAny ? provider : nil
     }
-
-    /// Every dragged card includes a UUID payload prefixed with this
-    /// literal, so the drop handler can distinguish a Kaste-internal
-    /// reorder from an unrelated text drop.
-    static let internalPayloadPrefix = "kaste://item/"
 
     // MARK: - Reveal in Finder
 

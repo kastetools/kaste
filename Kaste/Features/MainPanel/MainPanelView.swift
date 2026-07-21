@@ -214,22 +214,6 @@ private struct ClipItemListView: View {
     @Binding var visibleCount: Int
 
     @State private var selection: Int = 0
-    @State private var dragState: DragState? = nil
-
-    /// Live state for iPhone-style rearrangement. `startIndex` is where the
-    /// finger picked up the card; `insertIndex` is where the finger currently
-    /// is (recomputed continuously so other cards can shove aside in real
-    /// time). `translation` is the raw drag delta driving the picked-up
-    /// card's `.offset`.
-    private struct DragState: Equatable {
-        let id: UUID
-        var startIndex: Int
-        var insertIndex: Int
-        var translation: CGSize
-    }
-    private static let cardWidth: CGFloat = 224
-    private static let cardSpacing: CGFloat = 12
-    private static var slotWidth: CGFloat { cardWidth + cardSpacing }
 
     private static let fetchLimit = 500
 
@@ -320,51 +304,21 @@ private struct ClipItemListView: View {
         }
     }
 
-    /// Reorders `visible` so the currently-dragged item is removed from its
-    /// origin and re-inserted at the finger's current slot — SwiftUI's
-    /// spring animation on `orderKey` then shoves the surrounding cards
-    /// into place, matching iPhone home-screen rearrangement.
-    private func arrangeForDrag(_ visible: [ClipItem]) -> [ClipItem] {
-        guard let drag = dragState,
-              let sourceIdx = visible.firstIndex(where: { $0.id == drag.id }) else {
-            return visible
-        }
-        var arr = visible
-        let moved = arr.remove(at: sourceIdx)
-        let clampedTarget = max(0, min(arr.count, drag.insertIndex))
-        arr.insert(moved, at: clampedTarget)
-        return arr
-    }
-
     private func cards(_ visible: [ClipItem]) -> some View {
-        let displayed = arrangeForDrag(visible)
-        let orderKey = displayed.map(\.id)
-        return ScrollViewReader { proxy in
+        ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(alignment: .center, spacing: Self.cardSpacing) {
-                    ForEach(Array(displayed.enumerated()), id: \.element.id) { idx, item in
-                        let isDragging = dragState?.id == item.id
+                LazyHStack(alignment: .center, spacing: 12) {
+                    ForEach(Array(visible.enumerated()), id: \.element.id) { idx, item in
                         ClipCardView(
                             item: item,
                             index: idx,
                             isSelected: idx == selection
                         )
                         .equatable()
-                        .frame(width: Self.cardWidth)
-                        .offset(x: isDragging ? (dragState?.translation.width ?? 0) : 0,
-                                y: isDragging ? (dragState?.translation.height ?? 0) : 0)
-                        .scaleEffect(isDragging ? 1.05 : 1)
-                        .shadow(color: isDragging ? .black.opacity(0.35) : .clear,
-                                radius: isDragging ? 18 : 0,
-                                y: isDragging ? 6 : 0)
-                        .zIndex(isDragging ? 10 : 0)
                         .id(item.id)
-                        .onTapGesture(count: 2) { selection = idx; commit(displayed) }
+                        .onTapGesture(count: 2) { selection = idx; commit(visible) }
                         .simultaneousGesture(
                             TapGesture(count: 1).onEnded { selection = idx }
-                        )
-                        .simultaneousGesture(
-                            reorderGesture(for: item, originalIndex: sourceIndex(of: item, in: visible), visible: visible)
                         )
                         .contextMenu {
                             Button(item.isPinned ? "Unpin" : "Pin") {
@@ -387,93 +341,27 @@ private struct ClipItemListView: View {
                                 try? context.save()
                             }
                         }
+                        .onDrag {
+                            // External export only — dragging a file or image
+                            // card into Finder / Mail / IM writes the file URL.
+                            // Text / URL / color cards return an empty provider
+                            // and won't drag out; use right-click menu instead.
+                            ItemActions.makeExternalDragProvider(for: item) ?? NSItemProvider()
+                        }
                     }
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 4)
-                // Spring for the shove-aside choreography. Runs whenever the
-                // effective order changes — both live during drag and after
-                // release when we assign new sortRanks.
-                .animation(.spring(response: 0.32, dampingFraction: 0.82),
-                           value: orderKey)
             }
             .frame(maxWidth: .infinity)
             .animation(.none, value: visible.count)
             .onChange(of: selection) { _, new in
-                if new < displayed.count && dragState == nil {
+                if new < visible.count {
                     withAnimation(.easeOut(duration: 0.15)) {
-                        proxy.scrollTo(displayed[new].id, anchor: .center)
+                        proxy.scrollTo(visible[new].id, anchor: .center)
                     }
                 }
             }
-        }
-    }
-
-    private func sourceIndex(of item: ClipItem, in visible: [ClipItem]) -> Int {
-        visible.firstIndex(where: { $0.id == item.id }) ?? 0
-    }
-
-    /// The reorder gesture: finger down + move at least `minimumDistance`
-    /// horizontally engages drag mode; from then on the picked card
-    /// follows the finger and `insertIndex` is derived from horizontal
-    /// travel, driving the shove-aside animation.
-    private func reorderGesture(for item: ClipItem,
-                                originalIndex: Int,
-                                visible: [ClipItem]) -> some Gesture {
-        DragGesture(minimumDistance: 6, coordinateSpace: .local)
-            .onChanged { value in
-                if dragState?.id != item.id {
-                    dragState = DragState(
-                        id: item.id,
-                        startIndex: originalIndex,
-                        insertIndex: originalIndex,
-                        translation: value.translation
-                    )
-                }
-                dragState?.translation = value.translation
-                // How many slots have we traversed?
-                let delta = Int(round(value.translation.width / Self.slotWidth))
-                let newInsert = max(0, min(visible.count - 1, originalIndex + delta))
-                if dragState?.insertIndex != newInsert {
-                    withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
-                        dragState?.insertIndex = newInsert
-                    }
-                }
-            }
-            .onEnded { _ in
-                guard let drag = dragState else { return }
-                let start = drag.startIndex
-                let end = drag.insertIndex
-                withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
-                    dragState = nil
-                }
-                if start != end {
-                    applyReorder(from: start, to: end, visible: visible)
-                }
-            }
-    }
-
-    /// Commit the drag: rewrite sortRanks so the persisted order matches
-    /// the new displayed order. Uses 1024 gaps so the next drag has room
-    /// for interpolation without triggering a full renumber.
-    private func applyReorder(from source: Int, to target: Int, visible: [ClipItem]) {
-        guard visible.indices.contains(source), source != target else { return }
-        var arr = visible
-        let moved = arr.remove(at: source)
-        arr.insert(moved, at: min(target, arr.count))
-
-        let step: Double = 1024
-        var rank = Double(arr.count) * step
-        for item in arr {
-            item.sortRank = rank
-            rank -= step
-        }
-        do { try context.save() }
-        catch { KLog.log("applyReorder save failed: \(error)"); context.rollback() }
-
-        // Selection follows the moved item.
-        if let newIdx = arr.firstIndex(where: { $0.id == moved.id }) {
-            selection = newIdx
         }
     }
 
@@ -541,6 +429,28 @@ private struct ClipItemListView: View {
         commit(visible)
     }
 
+    /// Rewrite sortRanks so the persisted order matches "move item from
+    /// `source` index to `target` index". 1024-step gaps leave room for
+    /// further reorders without immediate renumbering.
+    private func applyReorder(from source: Int, to target: Int, visible: [ClipItem]) {
+        guard visible.indices.contains(source), source != target else { return }
+        var arr = visible
+        let moved = arr.remove(at: source)
+        arr.insert(moved, at: min(target, arr.count))
+
+        let step: Double = 1024
+        var rank = Double(arr.count) * step
+        for item in arr {
+            item.sortRank = rank
+            rank -= step
+        }
+        do { try context.save() }
+        catch { KLog.log("applyReorder save failed: \(error)"); context.rollback() }
+
+        if let newIdx = arr.firstIndex(where: { $0.id == moved.id }) {
+            selection = newIdx
+        }
+    }
 }
 
 private extension Comparable {
