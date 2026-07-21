@@ -348,7 +348,7 @@ private struct ClipItemListView: View {
                             }
                             if item.kind == .file || item.kind == .image {
                                 Divider()
-                                Button("Quick Look") { ItemActions.preview(item) }
+                                Button("Quick Look") { QuickLookPreviewController.shared.preview(item) }
                                 if item.kind == .file {
                                     Button("Open in Finder") { ItemActions.revealInFinder(item) }
                                 }
@@ -423,7 +423,7 @@ private struct ClipItemListView: View {
 
     private func quickLook(_ visible: [ClipItem]) {
         guard visible.indices.contains(selection) else { return }
-        ItemActions.preview(visible[selection])
+        QuickLookPreviewController.shared.preview(visible[selection])
     }
 
     private func togglePreview(_ visible: [ClipItem]) {

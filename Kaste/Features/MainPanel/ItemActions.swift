@@ -108,7 +108,7 @@ enum ItemActions {
         }
     }
 
-    private static func ensureImageTempFile(for item: ClipItem) -> URL? {
+    static func ensureImageTempFile(for item: ClipItem) -> URL? {
         guard let data = item.imageData else { return nil }
         let url = tempDir.appendingPathComponent("\(item.id.uuidString).png")
         if !FileManager.default.fileExists(atPath: url.path) {
