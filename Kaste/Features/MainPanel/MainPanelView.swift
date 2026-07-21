@@ -174,7 +174,7 @@ struct MainPanelView: View {
     private var footer: some View {
         HStack(spacing: 16) {
             footerKey("←/→", "Navigate")
-            footerKey("⇧←/→", "Reorder")
+            footerKey("⌃←/→", "Reorder")
             footerKey("⏎", plainTextMode ? "Paste plain" : "Paste")
             footerKey("Space", "Quick Look")
             footerKey("⌘⏎", "Reveal in Finder")
