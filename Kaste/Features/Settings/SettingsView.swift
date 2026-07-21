@@ -150,7 +150,7 @@ private struct ShortcutsTab: View {
             Section("Fixed (in-panel)") {
                 LabeledContent("Navigate cards",   value: "← →")
                 LabeledContent("Switch tab",       value: "⌘← ⌘→")
-                LabeledContent("Reorder card",     value: "⌃← ⌃→  (or ⇧← ⇧→)")
+                LabeledContent("Reorder card",     value: "⌥← ⌥→  (or ⇧← ⇧→)")
                 LabeledContent("Paste selected",   value: "⏎")
                 LabeledContent("Quick Look",       value: "Space")
                 LabeledContent("Reveal in Finder", value: "⌘⏎")

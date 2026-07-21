@@ -64,11 +64,11 @@ struct KeyHandler: NSViewRepresentable {
             switch event.keyCode {
             case 123:                                   // ←
                 if mods.contains(.command)                                { h.onPrevTab() }
-                else if mods.contains(.control) || mods.contains(.shift) { h.onMoveLeft() }
+                else if mods.contains(.option) || mods.contains(.shift)  { h.onMoveLeft() }
                 else                                                      { h.onLeft() }
             case 124:                                   // →
                 if mods.contains(.command)                                { h.onNextTab() }
-                else if mods.contains(.control) || mods.contains(.shift) { h.onMoveRight() }
+                else if mods.contains(.option) || mods.contains(.shift)  { h.onMoveRight() }
                 else                                                      { h.onRight() }
             case 36, 76:                                // return / numpad enter
                 if mods.contains(.command) { h.onCommandEnter() } else { h.onEnter() }
