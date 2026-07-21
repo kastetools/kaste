@@ -174,6 +174,7 @@ struct MainPanelView: View {
     private var footer: some View {
         HStack(spacing: 16) {
             footerKey("←/→", "Navigate")
+            footerKey("⇧←/→", "Reorder")
             footerKey("⏎", plainTextMode ? "Paste plain" : "Paste")
             footerKey("Space", "Quick Look")
             footerKey("⌘⏎", "Reveal in Finder")
@@ -274,6 +275,8 @@ private struct ClipItemListView: View {
                     onRight: { move(1, visible) },
                     onPrevTab: { session.onSwitchTab(false) },
                     onNextTab: { session.onSwitchTab(true) },
+                    onMoveLeft: { moveSelected(-1, visible) },
+                    onMoveRight: { moveSelected(1, visible) },
                     onEnter: { commit(visible) },
                     onCommandEnter: { revealInFinder(visible) },
                     onEsc: {
@@ -303,9 +306,13 @@ private struct ClipItemListView: View {
     }
 
     private func cards(_ visible: [ClipItem]) -> some View {
-        ScrollViewReader { proxy in
+        let orderKey = visible.map(\.id)
+        return ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(alignment: .center, spacing: 12) {
+                    // Animate whenever the ordering (by ID) shifts — this is
+                    // what makes drag / ⇧← / ⇧→ reorder slide the cards to
+                    // their new slots instead of snapping.
                     ForEach(Array(visible.enumerated()), id: \.element.id) { idx, item in
                         ClipCardView(
                             item: item,
@@ -377,6 +384,11 @@ private struct ClipItemListView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 4)
+                // Reorder animation: run a spring when the id-sequence
+                // shifts (drag drop / ⇧+arrow / dedup). Kept off the
+                // .count key path below so filter/search still snap.
+                .animation(.spring(response: 0.32, dampingFraction: 0.82),
+                           value: orderKey)
             }
             .frame(maxWidth: .infinity)
             .animation(.none, value: visible.count)
@@ -424,6 +436,35 @@ private struct ClipItemListView: View {
         ItemActions.revealInFinder(visible[selection])
     }
 
+    /// Move the currently-selected card one slot in the given direction
+    /// (`delta` is -1 for left, +1 for right). Reuses the drag-drop rank
+    /// math so keyboard reorder and drag reorder converge on the same
+    /// sortRank strategy.
+    private func moveSelected(_ delta: Int, _ visible: [ClipItem]) {
+        guard visible.indices.contains(selection) else { return }
+        let source = visible[selection]
+        let targetIdx = selection + delta
+
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+            // Left of index 0 or right of the last item — bump rank past the
+            // extreme so the item lands at the edge without needing a
+            // neighbour to interpolate with.
+            if targetIdx < 0 {
+                source.sortRank += 1
+            } else if targetIdx >= visible.count {
+                let last = visible[visible.count - 1]
+                source.sortRank = last.sortRank - 1
+            } else {
+                let target = visible[targetIdx]
+                reorder(sourceID: source.id, targetID: target.id, visible: visible)
+            }
+            do { try context.save() }
+            catch { KLog.log("moveSelected save failed: \(error)"); context.rollback() }
+
+            selection = max(0, min(visible.count - 1, targetIdx))
+        }
+    }
+
     private func togglePin(_ visible: [ClipItem]) {
         guard visible.indices.contains(selection) else { return }
         visible[selection].isPinned.toggle()
@@ -462,7 +503,9 @@ private struct ClipItemListView: View {
                   let sourceID = UUID(uuidString: text),
                   sourceID != target.id else { return }
             DispatchQueue.main.async {
-                reorder(sourceID: sourceID, targetID: target.id, visible: visible)
+                withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+                    reorder(sourceID: sourceID, targetID: target.id, visible: visible)
+                }
             }
         }
         return true
