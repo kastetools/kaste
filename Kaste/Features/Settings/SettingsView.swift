@@ -42,7 +42,6 @@ private struct GeneralTab: View {
 }
 
 private struct HistoryTab: View {
-    @AppStorage("maxItems") private var maxItems: Int = 1000
     @AppStorage("retentionDays") private var retentionDays: Int = 30
     @Environment(\.modelContext) private var context
 
@@ -67,8 +66,6 @@ private struct HistoryTab: View {
 
     var body: some View {
         Form {
-            Stepper("Keep last \(maxItems) items", value: $maxItems, in: 50...10000, step: 50)
-
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     Text("Retention")

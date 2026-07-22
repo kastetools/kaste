@@ -225,10 +225,9 @@ final class ClipboardMonitor {
         }
     }
 
-    /// Coalesce enforceRetention + enforceCapacity into at most one run every
-    /// 5 seconds. Repeated captures no longer trigger back-to-back deletions
-    /// that could delete a ClipItem while ClipCardView is mid-read of its
-    /// properties.
+    /// Coalesce enforceRetention into at most one run every 5 seconds.
+    /// Repeated captures no longer trigger back-to-back deletions that could
+    /// delete a ClipItem while ClipCardView is mid-read of its properties.
     private func scheduleCleanup() {
         guard !cleanupPending else { return }
         cleanupPending = true
@@ -236,7 +235,6 @@ final class ClipboardMonitor {
             guard let self else { return }
             self.cleanupPending = false
             self.enforceRetention()
-            self.enforceCapacity()
         }
     }
 
@@ -308,30 +306,7 @@ final class ClipboardMonitor {
         catch { KLog.log("enforceRetention save failed: \(error)"); context.rollback() }
     }
 
-    func enforceCapacity() {
-        let maxItems = UserDefaults.standard.object(forKey: "maxItems") as? Int ?? 1000
-        let nonPinned = FetchDescriptor<ClipItem>(predicate: #Predicate { !$0.isPinned })
-        let total: Int
-        do { total = try context.fetchCount(nonPinned) }
-        catch { KLog.log("enforceCapacity count failed: \(error)"); return }
-        guard total > maxItems else { return }
-        var oldest = FetchDescriptor<ClipItem>(
-            predicate: #Predicate { !$0.isPinned },
-            sortBy: [SortDescriptor(\.lastUsedAt, order: .forward)]
-        )
-        oldest.fetchLimit = total - maxItems
-        let victims: [ClipItem]
-        do { victims = try context.fetch(oldest) }
-        catch { KLog.log("enforceCapacity fetch failed: \(error)"); return }
-        for item in victims {
-            ClipImageCache.drop(item.id)
-            context.delete(item)
-        }
-        do { try context.save() }
-        catch { KLog.log("enforceCapacity save failed: \(error)"); context.rollback() }
-    }
-
-    private func serialize() -> Data? {
+private func serialize() -> Data? {
         guard let items = pasteboard.pasteboardItems else { return nil }
         var dict: [[String: Data]] = []
         for item in items {
