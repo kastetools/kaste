@@ -20,9 +20,30 @@ enum ClipImageCache {
         return img
     }
 
+    /// Load an image directly from a file URL (used for file-kind cards
+    /// whose path points at a PNG/JPG/etc.). Falls back to nil if the file
+    /// is gone or unreadable, so the caller can render a file-icon.
+    static func image(forID id: UUID, fileURL: URL) -> NSImage? {
+        let key = id.uuidString as NSString
+        if let hit = cache.object(forKey: key) { return hit }
+        guard let img = NSImage(contentsOf: fileURL) else { return nil }
+        let cost = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        cache.setObject(img, forKey: key, cost: cost)
+        return img
+    }
+
     static func drop(_ id: UUID) {
         cache.removeObject(forKey: id.uuidString as NSString)
     }
+}
+
+private let imageFileExtensions: Set<String> = [
+    "png", "jpg", "jpeg", "gif", "heic", "heif",
+    "webp", "bmp", "tiff", "tif"
+]
+
+private func isImagePath(_ path: String) -> Bool {
+    imageFileExtensions.contains((path as NSString).pathExtension.lowercased())
 }
 
 struct ClipCardView: View, Equatable {
@@ -159,18 +180,35 @@ struct ClipCardView: View, Equatable {
                     .foregroundStyle(.secondary)
             } else { Color.gray }
         case .file:
-            VStack(spacing: 4) {
-                Image(systemName: "doc.fill").font(.system(size: 28))
-                    .foregroundStyle(bannerColor)
-                Text((item.filePaths?.first as NSString?)?.lastPathComponent ?? "")
-                    .font(.system(size: 11)).lineLimit(2)
-                    .multilineTextAlignment(.center)
-                if let extra = item.filePaths.map({ $0.count - 1 }), extra > 0 {
-                    Text("+\(extra) more")
-                        .font(.system(size: 10)).foregroundStyle(.secondary)
+            let firstPath = item.filePaths?.first
+            let extraCount = (item.filePaths?.count ?? 0) - 1
+            if let path = firstPath, isImagePath(path),
+               let img = ClipImageCache.image(forID: item.id,
+                                              fileURL: URL(fileURLWithPath: path)) {
+                VStack(spacing: 4) {
+                    Image(nsImage: img)
+                        .resizable().scaledToFit()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    if extraCount > 0 {
+                        Text("+\(extraCount) more")
+                            .font(.system(size: 10)).foregroundStyle(.secondary)
+                    }
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                VStack(spacing: 4) {
+                    Image(systemName: "doc.fill").font(.system(size: 28))
+                        .foregroundStyle(bannerColor)
+                    Text((firstPath as NSString?)?.lastPathComponent ?? "")
+                        .font(.system(size: 11)).lineLimit(2)
+                        .multilineTextAlignment(.center)
+                    if extraCount > 0 {
+                        Text("+\(extraCount) more")
+                            .font(.system(size: 10)).foregroundStyle(.secondary)
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .url:
             VStack(alignment: .leading, spacing: 6) {
                 Image(systemName: "link")
