@@ -32,8 +32,13 @@ enum Paster {
             pb.setString(text, forType: .string)
         }
 
-        item.lastUsedAt = Date()
+        let now = Date()
+        item.lastUsedAt = now
         item.useCount += 1
+        // Promote to the top of the list. sortRank uses timeIntervalSince1970
+        // as its base (same as newly-captured items), which is always well
+        // above any rank produced by manual ⌥/⇧ reorder (~1e5–1e6 range).
+        item.sortRank = now.timeIntervalSince1970
 
         // Auto-paste off → just leave content on the pasteboard.
         guard autoPaste else { return }
