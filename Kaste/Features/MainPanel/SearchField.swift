@@ -15,6 +15,7 @@ struct SearchField: NSViewRepresentable {
     var placeholder: String
     var focusTrigger: Int = 0
     var onCancel: () -> Void
+    var onSubmit: () -> Void = {}
 
     func makeNSView(context: Context) -> NSTextField {
         let field = IMEAwareTextField()
@@ -28,6 +29,7 @@ struct SearchField: NSViewRepresentable {
         field.cell?.isScrollable = true
         field.delegate = context.coordinator
         field.onCancel = onCancel
+        field.onSubmit = onSubmit
         return field
     }
 
@@ -39,6 +41,7 @@ struct SearchField: NSViewRepresentable {
             nsView.stringValue = text
         }
         (nsView as? IMEAwareTextField)?.onCancel = onCancel
+        (nsView as? IMEAwareTextField)?.onSubmit = onSubmit
 
         if focusTrigger != context.coordinator.lastFocusTrigger {
             context.coordinator.lastFocusTrigger = focusTrigger
@@ -83,6 +86,7 @@ struct SearchField: NSViewRepresentable {
 
 private final class IMEAwareTextField: NSTextField {
     var onCancel: (() -> Void)?
+    var onSubmit: (() -> Void)?
 
     // Only fires when the IME has NOT consumed esc (i.e., no marked text).
     // When IME is composing, AppKit sends esc to the IME first and never
@@ -97,5 +101,12 @@ private final class IMEAwareTextField: NSTextField {
         } else {
             onCancel?()
         }
+    }
+
+    // Like cancelOperation, this is only invoked when the IME hasn't
+    // consumed the newline (i.e., not confirming a composition). Fires
+    // when the user presses ⏎ / Return on a committed search string.
+    override func insertNewline(_ sender: Any?) {
+        onSubmit?()
     }
 }

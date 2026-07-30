@@ -141,9 +141,14 @@ struct MainPanelView: View {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                 SearchField(text: $search,
                             placeholder: "Search",
-                            focusTrigger: searchFocusTick) {
-                    if search.isEmpty { onClose() } else { search = "" }
-                }
+                            focusTrigger: searchFocusTick,
+                            onCancel: {
+                                if search.isEmpty { onClose() } else { search = "" }
+                            },
+                            onSubmit: {
+                                guard !search.isEmpty else { return }
+                                session.searchSubmitTick &+= 1
+                            })
                 .frame(width: 200, height: 18)
             }
             .padding(.horizontal, 10).padding(.vertical, 6)
@@ -301,6 +306,13 @@ private struct ClipItemListView: View {
         }
         .onChange(of: isActive) { _, active in
             if active { visibleCount = visible.count }
+        }
+        .onChange(of: session.searchSubmitTick) { _, _ in
+            guard isActive, !visible.isEmpty else { return }
+            selection = 0
+            if let kv = KeyHandler.KeyView.activeView, let window = kv.window {
+                window.makeFirstResponder(kv)
+            }
         }
     }
 
