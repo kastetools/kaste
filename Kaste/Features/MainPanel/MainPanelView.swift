@@ -14,7 +14,7 @@ struct MainPanelView: View {
     @Query(sort: \ClipItem.sortRank, order: .reverse)
     private var allItems: [ClipItem]
     @Query(filter: #Predicate<ClipItem> { $0.isPinned },
-           sort: \ClipItem.sortRank, order: .reverse)
+           sort: \ClipItem.pinSortRank, order: .reverse)
     private var pinnedItems: [ClipItem]
 
     @State private var search = ""
@@ -215,6 +215,7 @@ private struct ClipItemListView: View {
 
     let filter: ClipKind?
     let search: String
+    let tab: MainPanelView.Tab
     let isActive: Bool
     @Binding var visibleCount: Int
 
@@ -235,18 +236,24 @@ private struct ClipItemListView: View {
     ) {
         self.filter = filter
         self.search = search
+        self.tab = tab
         self.isActive = isActive
         self._visibleCount = visibleCount
 
         // Descriptor only depends on `tab` so that switching filter/search does
         // NOT refetch from SwiftData — the body filters in memory instead.
+        // PIN tab uses its own `pinSortRank` so re-capture / paste bumps to
+        // ALL don't disturb the pin order.
         let onlyPinned = (tab == .pinned)
         let predicate = #Predicate<ClipItem> { item in
             !onlyPinned || item.isPinned
         }
+        let sortBy: [SortDescriptor<ClipItem>] = onlyPinned
+            ? [SortDescriptor(\.pinSortRank, order: .reverse)]
+            : [SortDescriptor(\.sortRank,    order: .reverse)]
         var descriptor = FetchDescriptor<ClipItem>(
             predicate: predicate,
-            sortBy: [SortDescriptor(\.sortRank, order: .reverse)]
+            sortBy: sortBy
         )
         descriptor.fetchLimit = Self.fetchLimit
         _items = Query(descriptor)
@@ -335,6 +342,9 @@ private struct ClipItemListView: View {
                         .contextMenu {
                             Button(item.isPinned ? "Unpin" : "Pin") {
                                 item.isPinned.toggle()
+                                if item.isPinned {
+                                    item.pinSortRank = Date().timeIntervalSince1970
+                                }
                                 try? context.save()
                             }
                             Button(plainTextMode ? "Paste as Plain Text" : "Paste") {
@@ -424,7 +434,14 @@ private struct ClipItemListView: View {
 
     private func togglePin(_ visible: [ClipItem]) {
         guard visible.indices.contains(selection) else { return }
-        visible[selection].isPinned.toggle()
+        let item = visible[selection]
+        item.isPinned.toggle()
+        // Newly-pinned items go to the top of the PIN tab. Unpin doesn't
+        // need to touch pinSortRank — the item just stops matching the
+        // pinned @Query.
+        if item.isPinned {
+            item.pinSortRank = Date().timeIntervalSince1970
+        }
         try? context.save()
     }
 
@@ -441,19 +458,23 @@ private struct ClipItemListView: View {
         commit(visible)
     }
 
-    /// Rewrite sortRanks so the persisted order matches "move item from
+    /// Rewrite ranks so the persisted order matches "move item from
     /// `source` index to `target` index". 1024-step gaps leave room for
-    /// further reorders without immediate renumbering.
+    /// further reorders without immediate renumbering. Writes to
+    /// `pinSortRank` in the PIN tab and `sortRank` in the ALL tab so
+    /// the two tab orderings stay independent.
     private func applyReorder(from source: Int, to target: Int, visible: [ClipItem]) {
         guard visible.indices.contains(source), source != target else { return }
         var arr = visible
         let moved = arr.remove(at: source)
         arr.insert(moved, at: min(target, arr.count))
 
+        let isPinnedTab = (tab == .pinned)
         let step: Double = 1024
         var rank = Double(arr.count) * step
         for item in arr {
-            item.sortRank = rank
+            if isPinnedTab { item.pinSortRank = rank }
+            else            { item.sortRank    = rank }
             rank -= step
         }
         do { try context.save() }

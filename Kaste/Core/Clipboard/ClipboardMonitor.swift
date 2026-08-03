@@ -287,6 +287,24 @@ final class ClipboardMonitor {
         catch { KLog.log("backfillSortRank save failed: \(error)"); context.rollback() }
     }
 
+    /// Seed `pinSortRank` for pinned rows that predate the pin/all sort split.
+    /// Uses the current `sortRank` so their initial pin-tab order matches
+    /// exactly what the user was seeing before the upgrade.
+    func backfillPinSortRank() {
+        let d = FetchDescriptor<ClipItem>(
+            predicate: #Predicate { $0.isPinned && $0.pinSortRank == 0 }
+        )
+        let pending: [ClipItem]
+        do { pending = try context.fetch(d) }
+        catch { KLog.log("backfillPinSortRank fetch failed: \(error)"); return }
+        guard !pending.isEmpty else { return }
+        for item in pending {
+            item.pinSortRank = item.sortRank
+        }
+        do { try context.save() }
+        catch { KLog.log("backfillPinSortRank save failed: \(error)"); context.rollback() }
+    }
+
     func enforceRetention() {
         let days = UserDefaults.standard.object(forKey: "retentionDays") as? Int ?? 30
         guard days > 0 else { return }

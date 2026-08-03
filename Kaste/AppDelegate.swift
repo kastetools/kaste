@@ -31,6 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let monitor = ClipboardMonitor(context: context)
         monitor.backfillSearchKey()
         monitor.backfillSortRank()
+        monitor.backfillPinSortRank()
         monitor.enforceRetention()
         monitor.start()
         self.clipboardMonitor = monitor

@@ -29,7 +29,7 @@ enum ClipKind: String, Codable, CaseIterable {
 
 @Model
 final class ClipItem {
-    #Index<ClipItem>([\.lastUsedAt], [\.isPinned], [\.kindRaw], [\.contentHash], [\.sortRank])
+    #Index<ClipItem>([\.lastUsedAt], [\.isPinned], [\.kindRaw], [\.contentHash], [\.sortRank], [\.pinSortRank])
 
     @Attribute(.unique) var id: UUID
     var createdAt: Date
@@ -51,6 +51,15 @@ final class ClipItem {
     /// show. `backfillSortRank` replaces the zeros with real values
     /// derived from `lastUsedAt` on the next launch.
     var sortRank: Double = 0
+
+    /// Pin-tab-only display order (DESC — larger = further left / on top).
+    /// Decoupled from `sortRank` so re-capture / paste can bump the ALL-tab
+    /// order without disturbing the manual pin arrangement. Set to
+    /// `now.timeIntervalSince1970` when an item is pinned, rewritten by
+    /// manual reorder inside the PIN tab. `= 0` default is load-bearing
+    /// for the same lightweight-migration reason as `sortRank`;
+    /// `backfillPinSortRank` seeds it from `sortRank` on the next launch.
+    var pinSortRank: Double = 0
 
     var plainText: String?
     var searchKey: String?
