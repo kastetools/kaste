@@ -459,29 +459,69 @@ private struct ClipItemListView: View {
     }
 
     /// Rewrite ranks so the persisted order matches "move item from
-    /// `source` index to `target` index". 1024-step gaps leave room for
-    /// further reorders without immediate renumbering. Writes to
-    /// `pinSortRank` in the PIN tab and `sortRank` in the ALL tab so
-    /// the two tab orderings stay independent.
+    /// `source` index to `target` index". Writes to `pinSortRank` in the
+    /// PIN tab and `sortRank` in the ALL tab so the two tab orderings
+    /// stay independent.
+    ///
+    /// Fast path: an adjacent move (|source-target| == 1, always true for
+    /// keyboard reorder) just swaps two rows' ranks — O(1) instead of
+    /// rewriting the whole visible slice. The full renumber path stays
+    /// available for future non-adjacent moves.
+    ///
+    /// context.save() is coalesced to at most one call ~300ms after the
+    /// user stops pressing so holding ⌥←/→ doesn't hit SQLite on every
+    /// key-repeat tick.
     private func applyReorder(from source: Int, to target: Int, visible: [ClipItem]) {
-        guard visible.indices.contains(source), source != target else { return }
-        var arr = visible
-        let moved = arr.remove(at: source)
-        arr.insert(moved, at: min(target, arr.count))
+        guard visible.indices.contains(source),
+              visible.indices.contains(target),
+              source != target else { return }
 
         let isPinnedTab = (tab == .pinned)
-        let step: Double = 1024
-        var rank = Double(arr.count) * step
-        for item in arr {
-            if isPinnedTab { item.pinSortRank = rank }
-            else            { item.sortRank    = rank }
-            rank -= step
-        }
-        do { try context.save() }
-        catch { KLog.log("applyReorder save failed: \(error)"); context.rollback() }
 
-        if let newIdx = arr.firstIndex(where: { $0.id == moved.id }) {
-            selection = newIdx
+        if abs(source - target) == 1 {
+            let a = visible[source]
+            let b = visible[target]
+            if isPinnedTab {
+                let tmp = a.pinSortRank; a.pinSortRank = b.pinSortRank; b.pinSortRank = tmp
+            } else {
+                let tmp = a.sortRank;    a.sortRank    = b.sortRank;    b.sortRank    = tmp
+            }
+            selection = target
+        } else {
+            var arr = visible
+            let moved = arr.remove(at: source)
+            arr.insert(moved, at: min(target, arr.count))
+            let step: Double = 1024
+            var rank = Double(arr.count) * step
+            for item in arr {
+                if isPinnedTab { item.pinSortRank = rank }
+                else            { item.sortRank    = rank }
+                rank -= step
+            }
+            if let newIdx = arr.firstIndex(where: { $0.id == moved.id }) {
+                selection = newIdx
+            }
+        }
+
+        ReorderSaver.schedule(context: context)
+    }
+}
+
+/// Debounces `ModelContext.save()` so a held ⌥/⇧ ←/→ keystroke burst
+/// doesn't hit SQLite on every key-repeat tick. Rank changes are visible
+/// immediately via SwiftData in-memory notifications; persistence just
+/// trails ~300ms behind the last key press.
+@MainActor
+private enum ReorderSaver {
+    static var pendingTask: Task<Void, Never>?
+
+    static func schedule(context: ModelContext) {
+        pendingTask?.cancel()
+        pendingTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            guard !Task.isCancelled else { return }
+            do { try context.save() }
+            catch { KLog.log("ReorderSaver save failed: \(error)"); context.rollback() }
         }
     }
 }
