@@ -221,8 +221,6 @@ private struct ClipItemListView: View {
 
     @State private var selection: Int = 0
 
-    private static let fetchLimit = 500
-
     private var plainTextMode: Bool { session.plainTextMode }
     private var onPaste: (ClipItem) -> Void { session.onPaste }
     private var onClose: () -> Void { session.onClose }
@@ -251,11 +249,14 @@ private struct ClipItemListView: View {
         let sortBy: [SortDescriptor<ClipItem>] = onlyPinned
             ? [SortDescriptor(\.pinSortRank, order: .reverse)]
             : [SortDescriptor(\.sortRank,    order: .reverse)]
-        var descriptor = FetchDescriptor<ClipItem>(
+        // No fetchLimit — the retention window (Settings → History) is the
+        // sole cap on visible history. LazyHStack only builds cards for the
+        // visible viewport, and imageData / pasteboardArchive are
+        // .externalStorage so untouched rows stay as lightweight faults.
+        let descriptor = FetchDescriptor<ClipItem>(
             predicate: predicate,
             sortBy: sortBy
         )
-        descriptor.fetchLimit = Self.fetchLimit
         _items = Query(descriptor)
     }
 
