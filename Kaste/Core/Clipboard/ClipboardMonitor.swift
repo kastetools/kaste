@@ -96,8 +96,19 @@ final class ClipboardMonitor {
             pendingRetries = 0
             let paths = urls.map { $0.path }
             let h = sha256(paths.joined(separator: "\n"))
+            // Snapshot image bytes NOW. Lark / 微信 / 飞书 write screenshots
+            // to a temp folder and often clear the file before the user
+            // opens Kaste, which would leave the card falling back to a
+            // generic doc icon. Keep the snapshot ≤ 20 MB to avoid RAW/HEIF
+            // originals bloating the store; above that we still have the
+            // file URL and the on-demand loader in ClipCardView.
+            let snapshotData = Self.snapshotIfImage(urls: urls, maxBytes: 20_000_000)
+            if let d = snapshotData {
+                KLog.log("capture: snapshotting image file bytes (\(d.count)B) into imageData")
+            }
             upsert(kind: .file, hash: h, archive: archive, frontApp: frontApp) {
                 ClipItem(kind: .file, hash: h, plainText: paths.joined(separator: "\n"),
+                         imageData: snapshotData,
                          filePaths: paths, pasteboardArchive: archive,
                          sourceBundleID: frontApp?.bundleIdentifier,
                          sourceAppName: frontApp?.localizedName)
@@ -342,6 +353,29 @@ private func serialize() -> Data? {
     private func sha256(_ s: String) -> String { sha256(Data(s.utf8)) }
     private func sha256(_ data: Data) -> String {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// If `urls` is exactly one file URL with an image-looking extension
+    /// and the file is readable and ≤ `maxBytes`, return its bytes.
+    /// Otherwise nil. Used to preserve image preview even after the source
+    /// app clears its temp file.
+    private static let snapshotImageExts: Set<String> = [
+        "png", "jpg", "jpeg", "gif", "heic", "heif",
+        "webp", "bmp", "tiff", "tif"
+    ]
+    private static func snapshotIfImage(urls: [URL], maxBytes: Int) -> Data? {
+        guard urls.count == 1, let url = urls.first,
+              snapshotImageExts.contains(url.pathExtension.lowercased()) else {
+            return nil
+        }
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: url.path),
+              let attrs = try? fm.attributesOfItem(atPath: url.path),
+              let size = (attrs[.size] as? NSNumber)?.intValue,
+              size > 0, size <= maxBytes else {
+            return nil
+        }
+        return try? Data(contentsOf: url)
     }
 
     /// Multi-strategy extraction of an image from HTML / WebArchive / RTF /

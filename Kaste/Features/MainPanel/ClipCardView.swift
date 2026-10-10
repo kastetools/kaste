@@ -182,9 +182,20 @@ struct ClipCardView: View, Equatable {
         case .file:
             let firstPath = item.filePaths?.first
             let extraCount = (item.filePaths?.count ?? 0) - 1
-            if let path = firstPath, isImagePath(path),
-               let img = ClipImageCache.image(forID: item.id,
-                                              fileURL: URL(fileURLWithPath: path)) {
+            // Prefer the captured snapshot — the source app (Lark, WeChat,
+            // 飞书) often clears its temp file within seconds of writing it,
+            // so `NSImage(contentsOf:)` on `firstPath` would read nothing.
+            let imgFromSnapshot: NSImage? = {
+                guard let data = item.imageData else { return nil }
+                return ClipImageCache.image(for: item.id, data: data)
+            }()
+            let imgFromFile: NSImage? = {
+                guard imgFromSnapshot == nil,
+                      let path = firstPath, isImagePath(path) else { return nil }
+                return ClipImageCache.image(forID: item.id,
+                                            fileURL: URL(fileURLWithPath: path))
+            }()
+            if let img = imgFromSnapshot ?? imgFromFile {
                 VStack(spacing: 4) {
                     Image(nsImage: img)
                         .resizable().scaledToFit()
