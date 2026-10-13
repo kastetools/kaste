@@ -11,7 +11,7 @@ enum Paster {
         pb.clearContents()
 
         if plainTextOnly, let text = item.plainText {
-            pb.setString(text, forType: .string)
+            pb.setString(stripMarkdown(text), forType: .string)
         } else if let data = item.pasteboardArchive,
                   let dict = (try? NSKeyedUnarchiver.unarchivedObject(
                     ofClasses: [NSArray.self, NSDictionary.self, NSData.self, NSString.self],
@@ -29,7 +29,7 @@ enum Paster {
             }
             pb.writeObjects(pbItems)
         } else if let text = item.plainText {
-            pb.setString(text, forType: .string)
+            pb.setString(stripMarkdown(text), forType: .string)
         }
 
         let now = Date()
@@ -112,7 +112,8 @@ enum Paster {
     static func plainPasteCurrent() {
         let autoPaste = (UserDefaults.standard.object(forKey: "autoPasteEnabled") as? Bool) ?? true
         let pb = NSPasteboard.general
-        guard let text = pb.string(forType: .string), !text.isEmpty else { return }
+        guard let rawText = pb.string(forType: .string), !rawText.isEmpty else { return }
+        let text = stripMarkdown(rawText)
 
         // Snapshot every type on every pasteboard item so we can restore
         // fidelity after the plain-paste completes.
@@ -170,6 +171,58 @@ enum Paster {
             }
         }
         DispatchQueue.main.async { poll() }
+    }
+
+    /// Strip markdown markup so paste-as-plain really gives the rendered
+    /// text rather than the markdown source. "Plain" semantically should
+    /// mean "no formatting markers of any kind", including the inline
+    /// characters that happen to live inside `.string`.
+    ///
+    /// Two passes:
+    /// - Line-level block markers (headers, lists, blockquotes, fenced
+    ///   code fences) via `String` regex — AttributedString's inline-only
+    ///   mode doesn't touch these.
+    /// - Inline markers (bold, italic, code, link, image) via
+    ///   `AttributedString(markdown:…, interpretedSyntax:
+    ///   .inlineOnlyPreservingWhitespace)` so our line structure stays
+    ///   intact.
+    ///
+    /// Content without any markdown is a no-op: regexes don't match plain
+    /// prose, and AttributedString returns the text as a single run.
+    static func stripMarkdown(_ text: String) -> String {
+        let lines = text.components(separatedBy: "\n").map { line -> String in
+            var s = line
+            // "# foo" / "## foo" / … → "foo"
+            s = s.replacingOccurrences(
+                of: #"^(\s*)#{1,6}[ \t]+"#, with: "$1",
+                options: .regularExpression)
+            // "- foo" / "* foo" / "+ foo" → "foo"
+            s = s.replacingOccurrences(
+                of: #"^(\s*)[-*+][ \t]+"#, with: "$1",
+                options: .regularExpression)
+            // "1. foo" / "12. foo" → "foo"
+            s = s.replacingOccurrences(
+                of: #"^(\s*)\d+\.[ \t]+"#, with: "$1",
+                options: .regularExpression)
+            // "> quoted" → "quoted"
+            s = s.replacingOccurrences(
+                of: #"^(\s*)>[ \t]?"#, with: "$1",
+                options: .regularExpression)
+            // Fenced code block fence lines — drop the ``` fence itself,
+            // keep the content between fences intact.
+            if s.trimmingCharacters(in: .whitespaces).hasPrefix("```") {
+                s = ""
+            }
+            return s
+        }
+        let blockStripped = lines.joined(separator: "\n")
+        guard let attr = try? AttributedString(
+            markdown: blockStripped,
+            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        ) else {
+            return blockStripped
+        }
+        return String(attr.characters)
     }
 
     private static func restorePasteboard(_ snapshot: [[String: Data]]) {
