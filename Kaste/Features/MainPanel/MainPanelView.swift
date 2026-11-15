@@ -39,26 +39,36 @@ struct MainPanelView: View {
                         search: search,
                         filter: filter,
                         tab: .all,
-                        isActive: tab == .all,
+                        isActive: tab == .all && session.pickerItem == nil,
                         visibleCount: $listCount
                     )
                     .opacity(tab == .all ? 1 : 0)
-                    .allowsHitTesting(tab == .all)
+                    .allowsHitTesting(tab == .all && session.pickerItem == nil)
 
                     ClipItemListView(
                         search: search,
                         filter: filter,
                         tab: .pinned,
-                        isActive: tab == .pinned,
+                        isActive: tab == .pinned && session.pickerItem == nil,
                         visibleCount: $listCount
                     )
                     .opacity(tab == .pinned ? 1 : 0)
-                    .allowsHitTesting(tab == .pinned)
+                    .allowsHitTesting(tab == .pinned && session.pickerItem == nil)
                 }
                 footer
             }
+            if let item = session.pickerItem, let text = item.plainText {
+                WordPickerView(
+                    originalText: text,
+                    onCopy:   { session.onPasteRawText($0) },
+                    onCancel: { session.pickerItem = nil }
+                )
+                .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                .zIndex(10)
+            }
         }
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .animation(.easeOut(duration: 0.14), value: session.pickerItem?.id)
         .onChange(of: session.resetTick) { _, _ in
             search = ""
             filter = nil
@@ -182,7 +192,7 @@ struct MainPanelView: View {
             footerKey("⌥←/→", "Reorder")
             footerKey("⏎", plainTextMode ? "Paste plain" : "Paste")
             footerKey("Space", "Quick Look")
-            footerKey("⌘⏎", "Reveal in Finder")
+            footerKey("⌘⏎", "Reveal / Pick Words")
             footerKey("⌘P", "Pin")
             footerKey("⌫", "Delete")
             footerKey("esc", "Close")
@@ -290,7 +300,7 @@ private struct ClipItemListView: View {
                     onMoveLeft: { moveSelected(-1, visible) },
                     onMoveRight: { moveSelected(1, visible) },
                     onEnter: { commit(visible) },
-                    onCommandEnter: { revealInFinder(visible) },
+                    onCommandEnter: { commandEnter(visible) },
                     onEsc: {
                         if selection > 0 {
                             selection = 0
@@ -417,9 +427,26 @@ private struct ClipItemListView: View {
         QuickLookPreviewController.shared.preview(visible[selection])
     }
 
-    private func revealInFinder(_ visible: [ClipItem]) {
+    /// ⌘⏎ dispatcher. For file / image kinds it opens Finder on the
+    /// underlying file (classic "reveal in Finder"). For text-shaped
+    /// kinds there's no file to open, so it opens the Word Picker on the
+    /// item's text instead — the shortcut gets reused for a utility that
+    /// actually fits the content.
+    private func commandEnter(_ visible: [ClipItem]) {
         guard visible.indices.contains(selection) else { return }
-        ItemActions.revealInFinder(visible[selection])
+        let item = visible[selection]
+        switch item.kind {
+        case .file, .image:
+            ItemActions.revealInFinder(item)
+        case .text, .rtf, .url:
+            if let text = item.plainText, !text.isEmpty {
+                session.pickerItem = item
+            } else {
+                NSSound.beep()
+            }
+        case .color:
+            NSSound.beep()
+        }
     }
 
     /// Move the currently-selected card one slot in the given direction

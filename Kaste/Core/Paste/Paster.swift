@@ -102,6 +102,25 @@ enum Paster {
         up?.post(tap: .cghidEventTap)
     }
 
+    /// Put a plain string on the pasteboard and synthesize ⌘V into the
+    /// previous frontmost app. Used by the Word Picker when the user
+    /// commits a subset of words — the string isn't stored on any
+    /// ClipItem, so `paste(_:plainTextOnly:)` doesn't fit.
+    static func pasteRawText(_ text: String) {
+        let autoPaste = (UserDefaults.standard.object(forKey: "autoPasteEnabled") as? Bool) ?? true
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(text, forType: .string)
+        if let first = pb.pasteboardItems?.first {
+            first.setData(Data(), forType: NSPasteboard.PasteboardType("app.kaste.internal"))
+        }
+        guard autoPaste else { return }
+        guard AXIsProcessTrusted() else { showAccessibilityAlert(); return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
+            sendCommandV()
+        }
+    }
+
     static var isAccessibilityTrusted: Bool { AXIsProcessTrusted() }
 
     /// Strip formatting from whatever is currently on the pasteboard and

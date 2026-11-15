@@ -162,6 +162,21 @@ final class PanelController: NSObject {
         }
     }
 
+    /// Commit path for the Word Picker — the string isn't backed by a
+    /// ClipItem, so we bypass the item-based paste and ship the raw text
+    /// through. Lifecycle (animate out → restore prev app → inject ⌘V)
+    /// matches `commit(item:)`.
+    private func commit(rawText: String) {
+        let app = previousApp
+        session.pickerItem = nil
+        animateOut {
+            app?.activate()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.04) {
+                Paster.pasteRawText(rawText)
+            }
+        }
+    }
+
     private func animateOut(_ completion: @escaping () -> Void) {
         // Clear transient UI state so it doesn't linger into the next show:
         // stale search text, filter selection, tab, and any search-field
@@ -237,6 +252,7 @@ final class PanelController: NSObject {
         // Wire session callbacks once; the hosting view is then reused across all show/hide.
         session.onPaste = { [weak self] item in self?.commit(item: item) }
         session.onClose = { [weak self] in self?.hide() }
+        session.onPasteRawText = { [weak self] text in self?.commit(rawText: text) }
 
         // When the user clicks into another app, run our own hide animation
         // instead of AppKit's silent flag-hide. We listen on the *app*

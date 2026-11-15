@@ -71,7 +71,8 @@ struct KeyHandler: NSViewRepresentable {
                 else if mods.contains(.option) || mods.contains(.shift)  { h.onMoveRight() }
                 else                                                      { h.onRight() }
             case 36, 76:                                // return / numpad enter
-                if mods.contains(.command) { h.onCommandEnter() } else { h.onEnter() }
+                if mods.contains(.command) { h.onCommandEnter() }
+                else                        { h.onEnter() }
             case 53: h.onEsc()                         // esc
             case 49: h.onSpace()                       // space
             case 35:                                   // P
