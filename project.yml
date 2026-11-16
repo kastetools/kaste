@@ -10,7 +10,7 @@ settings:
   base:
     SWIFT_VERSION: "5.10"
     MACOSX_DEPLOYMENT_TARGET: "15.0"
-    MARKETING_VERSION: "1.1.58"
+    MARKETING_VERSION: "1.1.59"
     CURRENT_PROJECT_VERSION: "1"
     ENABLE_HARDENED_RUNTIME: YES
     CODE_SIGN_STYLE: Automatic
@@ -44,3 +44,14 @@ targets:
         ENABLE_PREVIEWS: YES
         SWIFT_EMIT_LOC_STRINGS: YES
         COMBINE_HIDPI_IMAGES: YES
+        SWIFT_OBJC_BRIDGING_HEADER: Kaste/Kaste-Bridging-Header.h
+        CLANG_CXX_LANGUAGE_STANDARD: "c++17"
+        CLANG_CXX_LIBRARY: "libc++"
+        # Vendored cppjieba is header-only; expose its include root so
+        # ObjC++ bridge can `#include "cppjieba/Jieba.hpp"`.
+        HEADER_SEARCH_PATHS:
+          - $(SRCROOT)/Kaste/Vendor
+        # Pragmas / C++14 niceties in cppjieba surface warnings under
+        # Clang's defaults — harmless, muted so CI output stays clean.
+        GCC_WARN_64_TO_32_BIT_CONVERSION: NO
+        CLANG_WARN_UNGUARDED_AVAILABILITY: NO

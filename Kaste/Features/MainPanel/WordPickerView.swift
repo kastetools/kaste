@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import NaturalLanguage
 
 /// Overlay that renders a text item as discrete word chips and lets the
 /// user cherry-pick which words to paste. Triggered by ⌥⏎ on any text /
@@ -21,6 +22,10 @@ struct WordPickerView: View {
     @State private var dragAdditive: Bool? = nil
 
     private let words: [String]
+    /// Source-text range for each `words[i]`. Preserved so copy-selected
+    /// can reconstruct the original spacing (English kept as-is, adjacent
+    /// Chinese words rejoined with no separator).
+    private let ranges: [Range<String.Index>]
 
     init(originalText: String,
          onCopy: @escaping (String) -> Void,
@@ -28,9 +33,40 @@ struct WordPickerView: View {
         self.originalText = originalText
         self.onCopy = onCopy
         self.onCancel = onCancel
-        self.words = originalText
-            .split(whereSeparator: { $0.isWhitespace })
-            .map { String($0) }
+        let parsed = Self.tokenize(originalText)
+        self.words  = parsed.map(\.text)
+        self.ranges = parsed.map(\.range)
+    }
+
+    /// Language-aware word segmentation. Preferred path is Jieba
+    /// (industry-standard Chinese dictionary segmenter, also handles
+    /// English via its own mix-segment code path); if the vendored dict
+    /// files fail to load for any reason, falls back to Apple's
+    /// `NLTokenizer` so the picker still works, just with slightly
+    /// coarser Chinese segmentation.
+    private static func tokenize(
+        _ text: String
+    ) -> [(text: String, range: Range<String.Index>)] {
+        if JiebaSegmenter.isAvailable {
+            return JiebaSegmenter.tokenize(text)
+        }
+        return nlTokenize(text)
+    }
+
+    private static func nlTokenize(
+        _ text: String
+    ) -> [(text: String, range: Range<String.Index>)] {
+        let tokenizer = NLTokenizer(unit: .word)
+        tokenizer.string = text
+        var out: [(String, Range<String.Index>)] = []
+        tokenizer.enumerateTokens(in: text.startIndex..<text.endIndex) { range, _ in
+            let s = String(text[range])
+            if !s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                out.append((s, range))
+            }
+            return true
+        }
+        return out
     }
 
     var body: some View {
@@ -239,10 +275,46 @@ struct WordPickerView: View {
 
     private func copySelected() {
         guard !selectedIndices.isEmpty else { return }
-        let text = selectedIndices.sorted()
-            .map { words[$0] }
-            .joined(separator: " ")
-        onCopy(text)
+        let sorted = selectedIndices.sorted()
+        var out = words[sorted[0]]
+        for i in 1..<sorted.count {
+            let prevIdx = sorted[i - 1]
+            let currIdx = sorted[i]
+            // Take the original substring sitting between the two tokens in
+            // the source text; strip to whitespace only. This keeps English
+            // spaces / newlines intact and lets adjacent Chinese words
+            // rejoin with no inserted separator.
+            let gap = originalText[ranges[prevIdx].upperBound..<ranges[currIdx].lowerBound]
+            let gapWs = String(gap.filter { $0.isWhitespace })
+            if !gapWs.isEmpty {
+                out += gapWs + words[currIdx]
+            } else {
+                // No whitespace in gap → either naturally adjacent (CJK) or
+                // the user skipped a non-whitespace token. Use a space only
+                // when at least one side is non-CJK so Latin words don't
+                // glue together.
+                let bothCJK = (out.last.map(Self.isCJK) ?? false)
+                           && (words[currIdx].first.map(Self.isCJK) ?? false)
+                out += (bothCJK ? "" : " ") + words[currIdx]
+            }
+        }
+        onCopy(out)
+    }
+
+    private static func isCJK(_ ch: Character) -> Bool {
+        for s in ch.unicodeScalars {
+            let v = s.value
+            if (0x3000...0x30FF).contains(v)   // CJK symbols / Hiragana / Katakana
+                || (0x3400...0x4DBF).contains(v) // CJK Unified Ext A
+                || (0x4E00...0x9FFF).contains(v) // CJK Unified Ideographs
+                || (0xAC00...0xD7AF).contains(v) // Hangul Syllables
+                || (0xF900...0xFAFF).contains(v) // CJK Compatibility
+                || (0xFF00...0xFFEF).contains(v) // Halfwidth / Fullwidth
+            {
+                return true
+            }
+        }
+        return false
     }
 }
 

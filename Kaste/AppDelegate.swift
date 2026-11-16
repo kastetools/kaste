@@ -73,6 +73,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task.detached(priority: .utility) {
             ItemActions.pruneOldTempFiles()
         }
+
+        // Pre-warm the Jieba segmenter in the background. First call loads
+        // ~10 MB of dictionary off disk (100-500 ms); doing it here keeps
+        // the first ⌘⏎ on a text card snappy. The tokenize("") call also
+        // smoke-tests that the bundled dict files are reachable so we log
+        // failures at launch instead of on first picker open.
+        Task.detached(priority: .utility) {
+            _ = JiebaSegmenter.tokenize("预热")
+        }
     }
 
     /// Silences macOS 14+ warning "supportsSecureRestorableState not set".
