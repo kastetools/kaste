@@ -92,23 +92,36 @@ final class ClipboardMonitor {
         // File URLs
         if let urls = pasteboard.readObjects(forClasses: [NSURL.self]) as? [URL], !urls.isEmpty,
            urls.allSatisfy({ $0.isFileURL }) {
-            KLog.log("capture: matched file URLs (\(urls.count))")
             pendingRetries = 0
             let paths = urls.map { $0.path }
-            let h = sha256(paths.joined(separator: "\n"))
-            // Snapshot image bytes NOW. Lark / 微信 / 飞书 write screenshots
-            // to a temp folder and often clear the file before the user
-            // opens Kaste, which would leave the card falling back to a
-            // generic doc icon. Keep the snapshot ≤ 20 MB to avoid RAW/HEIF
-            // originals bloating the store; above that we still have the
-            // file URL and the on-demand loader in ClipCardView.
-            let snapshotData = Self.snapshotIfImage(urls: urls, maxBytes: 20_000_000)
-            if let d = snapshotData {
-                KLog.log("capture: snapshotting image file bytes (\(d.count)B) into imageData")
+
+            // Single image file URL → capture as .image, not .file. WeChat /
+            // Lark / 飞书 write both an image blob AND a file URL on a
+            // screenshot copy (two separate changeCount bumps). Using the
+            // same bytes-based hash as the NSImage branch means
+            // `deduplicate(hash:)` collapses the sibling capture instead of
+            // surfacing a useless doc-icon card next to the real preview.
+            // Falls through to the plain .file path if the file isn't an
+            // image or we can't read its bytes (> 20 MB cap, or the source
+            // app already cleared the temp file).
+            if urls.count == 1,
+               let imageBytes = Self.snapshotIfImage(urls: urls, maxBytes: 20_000_000) {
+                KLog.log("capture: matched single image file URL (\(imageBytes.count)B), capturing as .image")
+                let h = sha256(imageBytes)
+                upsert(kind: .image, hash: h, archive: archive, frontApp: frontApp) {
+                    ClipItem(kind: .image, hash: h, plainText: nil,
+                             imageData: imageBytes,
+                             pasteboardArchive: archive,
+                             sourceBundleID: frontApp?.bundleIdentifier,
+                             sourceAppName: frontApp?.localizedName)
+                }
+                return
             }
+
+            KLog.log("capture: matched file URLs (\(urls.count))")
+            let h = sha256(paths.joined(separator: "\n"))
             upsert(kind: .file, hash: h, archive: archive, frontApp: frontApp) {
                 ClipItem(kind: .file, hash: h, plainText: paths.joined(separator: "\n"),
-                         imageData: snapshotData,
                          filePaths: paths, pasteboardArchive: archive,
                          sourceBundleID: frontApp?.bundleIdentifier,
                          sourceAppName: frontApp?.localizedName)
