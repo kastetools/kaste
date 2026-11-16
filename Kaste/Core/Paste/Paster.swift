@@ -106,14 +106,16 @@ enum Paster {
     /// previous frontmost app. Used by the Word Picker when the user
     /// commits a subset of words — the string isn't stored on any
     /// ClipItem, so `paste(_:plainTextOnly:)` doesn't fit.
+    ///
+    /// Deliberately does NOT set the `app.kaste.internal` marker: the
+    /// picked substring is brand-new content that isn't yet in the
+    /// history, so we WANT ClipboardMonitor to capture it on its next
+    /// tick (that's the whole point of a clipboard manager).
     static func pasteRawText(_ text: String) {
         let autoPaste = (UserDefaults.standard.object(forKey: "autoPasteEnabled") as? Bool) ?? true
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setString(text, forType: .string)
-        if let first = pb.pasteboardItems?.first {
-            first.setData(Data(), forType: NSPasteboard.PasteboardType("app.kaste.internal"))
-        }
         guard autoPaste else { return }
         guard AXIsProcessTrusted() else { showAccessibilityAlert(); return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
