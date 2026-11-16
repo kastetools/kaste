@@ -38,32 +38,148 @@ struct WordPickerView: View {
         self.ranges = parsed.map(\.range)
     }
 
-    /// Language-aware word segmentation. Preferred path is Jieba
-    /// (industry-standard Chinese dictionary segmenter, also handles
-    /// English via its own mix-segment code path); if the vendored dict
-    /// files fail to load for any reason, falls back to Apple's
-    /// `NLTokenizer` so the picker still works, just with slightly
-    /// coarser Chinese segmentation.
+    /// Top-level tokenizer. Two-phase:
+    ///
+    /// 1. **Atomic spans** — URLs, emails, phone numbers, @mentions,
+    ///    Markdown links — are detected first (NSDataDetector + a couple
+    ///    of regexes) and treated as a single indivisible chip. Without
+    ///    this, "https://app.kolebox.id/" would collapse into
+    ///    [https / app / kolebox / id] after punctuation-filtering, which
+    ///    is useless for the "pick the URL" workflow.
+    ///
+    /// 2. **Word segmentation** — everything between (and before / after)
+    ///    the atomic spans goes through Jieba (industry-standard Chinese
+    ///    dictionary, also handles English), falling back to
+    ///    `NLTokenizer` only if the vendored dict bundle is missing.
     private static func tokenize(
         _ text: String
     ) -> [(text: String, range: Range<String.Index>)] {
-        if JiebaSegmenter.isAvailable {
-            return JiebaSegmenter.tokenize(text)
+        guard !text.isEmpty else { return [] }
+
+        let atoms = atomicSpans(in: text)
+        var out: [(String, Range<String.Index>)] = []
+        var cursor = text.startIndex
+
+        for atom in atoms {
+            if cursor < atom.lowerBound {
+                appendWordSegmented(
+                    fullText: text,
+                    gap: cursor..<atom.lowerBound,
+                    into: &out
+                )
+            }
+            out.append((String(text[atom]), atom))
+            cursor = atom.upperBound
         }
-        return nlTokenize(text)
+        if cursor < text.endIndex {
+            appendWordSegmented(
+                fullText: text,
+                gap: cursor..<text.endIndex,
+                into: &out
+            )
+        }
+        return out
     }
 
-    private static func nlTokenize(
-        _ text: String
-    ) -> [(text: String, range: Range<String.Index>)] {
+    /// Discover indivisible spans — URLs, emails, phone numbers, bare
+    /// email addresses, @mentions, Markdown `[text](url)` links.
+    /// Overlaps are merged (longer span wins) so a URL inside a Markdown
+    /// link doesn't double-register.
+    private static func atomicSpans(
+        in text: String
+    ) -> [Range<String.Index>] {
+        var spans: [Range<String.Index>] = []
+        let nsText = text as NSString
+        let full = NSRange(location: 0, length: nsText.length)
+
+        // 1) NSDataDetector: links (incl. mailto:), phone numbers.
+        let types: NSTextCheckingResult.CheckingType = [.link, .phoneNumber]
+        if let detector = try? NSDataDetector(types: types.rawValue) {
+            for m in detector.matches(in: text, options: [], range: full) {
+                if let r = Range(m.range, in: text) { spans.append(r) }
+            }
+        }
+
+        // 2) Bare email: user@host.tld (NSDataDetector's .link misses
+        //    these unless prefixed with mailto:).
+        let emailPattern =
+            #"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"#
+        appendRegexSpans(emailPattern, in: text, into: &spans)
+
+        // 3) @mentions, supports CJK handles. `\w` in ICU regex is
+        //    Unicode-aware so it covers CJK letters out of the box.
+        let mentionPattern = #"@\w+"#
+        appendRegexSpans(mentionPattern, in: text, into: &spans)
+
+        // 4) Markdown links: [label](target) kept whole.
+        let mdLinkPattern = #"\[[^\]\n]+\]\([^\)\n]+\)"#
+        appendRegexSpans(mdLinkPattern, in: text, into: &spans)
+
+        // Merge overlaps: sort by start, drop / extend as needed.
+        spans.sort { $0.lowerBound < $1.lowerBound }
+        var merged: [Range<String.Index>] = []
+        for span in spans {
+            if let last = merged.last, span.lowerBound < last.upperBound {
+                if span.upperBound > last.upperBound {
+                    merged[merged.count - 1] = last.lowerBound..<span.upperBound
+                }
+            } else {
+                merged.append(span)
+            }
+        }
+        return merged
+    }
+
+    private static func appendRegexSpans(
+        _ pattern: String,
+        in text: String,
+        into spans: inout [Range<String.Index>]
+    ) {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return }
+        let nsText = text as NSString
+        let full = NSRange(location: 0, length: nsText.length)
+        for m in regex.matches(in: text, options: [], range: full) {
+            if let r = Range(m.range, in: text) { spans.append(r) }
+        }
+    }
+
+    /// Run the word segmenter on `text[gap]` and append the surviving
+    /// tokens (non-whitespace, non-pure-punctuation) into `out`, with
+    /// each token's range re-anchored back to the full text.
+    private static func appendWordSegmented(
+        fullText: String,
+        gap: Range<String.Index>,
+        into out: inout [(String, Range<String.Index>)]
+    ) {
+        let gapText = String(fullText[gap])
+        let words = JiebaSegmenter.isAvailable
+            ? JiebaSegmenter.rawCut(gapText)
+            : nlRawTokens(gapText)
+        var cursor = gap.lowerBound
+        for word in words {
+            guard !word.isEmpty else { continue }
+            guard let found = fullText.range(
+                of: word,
+                options: .literal,
+                range: cursor..<gap.upperBound
+            ) else { continue }
+            cursor = found.upperBound
+            let trimmed = word.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            if trimmed.unicodeScalars.allSatisfy({
+                CharacterSet.punctuationCharacters.contains($0)
+                || CharacterSet.symbols.contains($0)
+            }) { continue }
+            out.append((word, found))
+        }
+    }
+
+    private static func nlRawTokens(_ text: String) -> [String] {
         let tokenizer = NLTokenizer(unit: .word)
         tokenizer.string = text
-        var out: [(String, Range<String.Index>)] = []
+        var out: [String] = []
         tokenizer.enumerateTokens(in: text.startIndex..<text.endIndex) { range, _ in
-            let s = String(text[range])
-            if !s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                out.append((s, range))
-            }
+            out.append(String(text[range]))
             return true
         }
         return out
